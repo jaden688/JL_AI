@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.antigravity.dev/agent-card.schema.json",
+  "name": "WebulaCode Agent",
+  "description": "JL Engine — self-hosted agentic AI runtime with real browser control, live tool creation, and A2A protocol support.",
+  "version": "1.1.0",
+  "publicUrl": "https://www.webulacode.com",
+  "provider": { "organization": "WebulaCode", "url": "https://www.webulacode.com" },
+  "capabilities": { "streaming": true, "pushNotifications": true },
+  "supportedInterfaces": [
+    {
+      "url": "https://www.webulacode.com/api/a2a",
+      "protocolBinding": "JSONRPC",
+      "protocolVersion": "1.0"
+    }
+  ],
+  "defaultInputModes": ["text/plain", "application/json"],
+  "defaultOutputModes": ["application/json", "text/plain"],
+  "auth": {
+    "type": "bearer",
+    "bearerToken": "REPLACE_WITH_YOUR_API_KEY"
+  },
+  "pricing": {
+    "model": "pay-per-use",
+    "currency": "USD",
+    "pricePer1KRequests": 0.01,
+    "pricePer1KInputChars": 0.005,
+    "pricePer1KOutputChars": 0.005,
+    "pricePerToolCall": 0.01
+  },
+  "payment": {
+    "stripe": {
+      "publicKey": "REPLACE_WITH_STRIPE_PUBLISHABLE_KEY"
+    }
+  },
+  "skills": []
+}

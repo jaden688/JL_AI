@@ -1,0 +1,8 @@
+{
+  "buildCommand": "",
+  "outputDirectory": "public",
+  "rewrites": [
+    { "source": "/agent", "destination": "/.well-known/agent.json" },
+    { "source": "/api/a2a/:path*", "destination": "/api/a2a" }
+  ]
+}
