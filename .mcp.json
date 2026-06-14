@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "sparkbyte": {
+      "command": "python",
+      "args": [
+        "C:\\Users\\J_lin\\Desktop\\JL_Engine-SB.Omni\\mcp_server\\server.py"
+      ]
+    }
+  }
+}

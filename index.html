@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SparkByte — Behavioral AI Engine for Claude, Cursor & VS Code</title>
+    <meta name="description" content="Julia-native AI agent with a behavioral control layer. Plugs into Claude Desktop, Cursor, and VS Code via MCP. Live engine state, forged tools, GitHub quarry, persistent memory. $9/month." />
+    <meta property="og:title" content="SparkByte — Behavioral AI Engine" />
+    <meta property="og:description" content="Plug it into Claude, Cursor, or VS Code. Agents with a real behavioral layer — gait, rhythm, aperture, drift — not prompt cosplay." />
+    <meta property="og:url" content="https://agent.webulacode.com" />
+    <meta property="og:type" content="website" />
+    <style>
+        :root {
+            --primary: #ff6f61;
+            --primary-hot: #ff8f81;
+            --accent: #61c8ff;
+            --bg-dark: #0d0f14;
+            --bg-mid: #141821;
+            --bg-card: #1c2030;
+            --bg-card-hover: #242a3c;
+            --text-light: #eef0f6;
+            --text-muted: #a8b0c2;
+            --border: #2a2f42;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-light);
+            line-height: 1.6;
+        }
+        a { color: var(--primary); text-decoration: none; }
+        a:hover { color: var(--primary-hot); }
+        code {
+            background: #0a0c10;
+            padding: 0.15em 0.4em;
+            border-radius: 3px;
+            font-family: "SF Mono", "Consolas", monospace;
+            font-size: 0.92em;
+            color: var(--accent);
+        }
+        pre {
+            background: #0a0c10;
+            padding: 1.1rem 1.3rem;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            overflow-x: auto;
+            font-family: "SF Mono", "Consolas", monospace;
+            font-size: 0.9rem;
+            line-height: 1.55;
+            color: var(--text-light);
+        }
+        pre code { background: transparent; padding: 0; color: inherit; }
+        nav {
+            position: sticky; top: 0; z-index: 50;
+            background: rgba(13,15,20,0.85);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--border);
+            padding: 0.9rem 2rem;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        nav .logo { font-weight: 700; font-size: 1.15rem; letter-spacing: 0.5px; }
+        nav .logo span { color: var(--primary); }
+        nav ul { display: flex; gap: 1.5rem; list-style: none; margin: 0; padding: 0; }
+        nav ul a { color: var(--text-muted); font-size: 0.95rem; }
+        nav ul a:hover { color: var(--text-light); }
+        header {
+            padding: 6rem 2rem 5rem;
+            text-align: center;
+            background: radial-gradient(ellipse at top, rgba(255,111,97,0.12) 0%, transparent 70%);
+        }
+        header h1 {
+            font-size: 3.5rem; margin: 0 0 1rem;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        header .tag { font-size: 1.3rem; color: var(--text-muted); max-width: 720px; margin: 0 auto 2rem; }
+        .cta-row { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+        .btn {
+            display: inline-block;
+            padding: 0.95rem 2rem;
+            font-size: 1.05rem;
+            font-weight: 600;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            text-decoration: none;
+            transition: transform 0.15s, box-shadow 0.15s;
+        }
+        .btn-primary {
+            background: var(--primary); color: #fff;
+            box-shadow: 0 4px 16px rgba(255,111,97,0.3);
+        }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(255,111,97,0.45); color: #fff; }
+        .btn-secondary {
+            background: transparent; color: var(--text-light);
+            border: 1px solid var(--border);
+        }
+        .btn-secondary:hover { background: var(--bg-card); color: var(--text-light); }
+        section { padding: 4.5rem 2rem; max-width: 1100px; margin: auto; }
+        .section-title { text-align: center; margin-bottom: 3rem; font-size: 2.2rem; color: var(--text-light); }
+        .section-title span { color: var(--primary); }
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 1.5rem;
+        }
+        .feature {
+            background: var(--bg-card);
+            padding: 2rem 1.7rem;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            transition: transform 0.2s, border-color 0.2s;
+        }
+        .feature:hover { transform: translateY(-4px); border-color: var(--primary); }
+        .feature .icon { font-size: 2rem; margin-bottom: 0.8rem; }
+        .feature h3 { margin: 0 0 0.6rem; color: var(--primary); font-size: 1.2rem; }
+        .feature p { margin: 0; color: var(--text-muted); font-size: 0.98rem; }
+        .install-tabs {
+            display: flex; gap: 0.5rem;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 1.5rem;
+        }
+        .install-tab {
+            padding: 0.7rem 1.4rem; background: none; border: none;
+            color: var(--text-muted); cursor: pointer; font-size: 1rem;
+            border-bottom: 2px solid transparent;
+            transition: color 0.15s, border-color 0.15s;
+        }
+        .install-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+        .install-panel { display: none; }
+        .install-panel.active { display: block; }
+        .pricing {
+            max-width: 400px; margin: auto;
+            background: var(--bg-card);
+            padding: 2.5rem 2rem;
+            border-radius: 12px;
+            border: 2px solid var(--primary);
+            text-align: center;
+            box-shadow: 0 10px 40px rgba(255,111,97,0.15);
+        }
+        .pricing .tier { font-size: 1.3rem; color: var(--primary); margin: 0 0 0.5rem; }
+        .pricing .price { font-size: 3.5rem; font-weight: 700; margin: 0.3rem 0; }
+        .pricing .price small { font-size: 1rem; color: var(--text-muted); font-weight: 400; }
+        .pricing ul { list-style: none; padding: 0; margin: 1.5rem 0; text-align: left; }
+        .pricing li { padding: 0.4rem 0; color: var(--text-muted); }
+        .pricing li::before { content: "✓ "; color: var(--primary); font-weight: 700; }
+        footer {
+            text-align: center;
+            padding: 2.5rem 2rem;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            border-top: 1px solid var(--border);
+        }
+        footer a { color: var(--text-muted); margin: 0 0.6rem; }
+        footer a:hover { color: var(--primary); }
+        @media (max-width: 640px) {
+            header h1 { font-size: 2.3rem; }
+            header .tag { font-size: 1.1rem; }
+            section { padding: 3rem 1.2rem; }
+            .section-title { font-size: 1.7rem; }
+            nav ul { display: none; }
+        }
+    </style>
+</head>
+<body>
+<nav>
+    <div class="logo">Spark<span>Byte</span></div>
+    <ul>
+        <li><a href="#why">Why</a></li>
+        <li><a href="#install">Install</a></li>
+        <li><a href="#pricing">Pricing</a></li>
+    </ul>
+</nav>
+
+<header>
+    <h1>Agents with a behavioral layer.</h1>
+    <p class="tag">SparkByte is a Julia-native AI engine with a real internal state machine — gait, rhythm, aperture, drift. Plug it into <strong>Claude Desktop</strong>, <strong>Cursor</strong>, or <strong>VS Code</strong> via MCP and stop prompting the same cosplay over and over.</p>
+    <div class="cta-row">
+        <a class="btn btn-primary" href="https://buy.stripe.com/8x200c9zf1j0gwo7enew800">Get SparkByte Pro — $9/mo</a>
+        <a class="btn btn-secondary" href="#install">See how to install</a>
+    </div>
+</header>
+
+<section id="why">
+    <h2 class="section-title">Why <span>SparkByte</span>?</h2>
+    <div class="features">
+        <div class="feature">
+            <div class="icon">🧠</div>
+            <h3>Behavioral layer</h3>
+            <p>Four control dimensions — gait, rhythm, aperture, drift pressure — shift the engine's tone and judgment dynamically instead of you shoving another system prompt.</p>
+        </div>
+        <div class="feature">
+            <div class="icon">🔨</div>
+            <h3>Forged tools</h3>
+            <p>The engine writes its own Julia tools on the fly. Call them from your LLM, they run at native speed, their state persists across sessions.</p>
+        </div>
+        <div class="feature">
+            <div class="icon">🔍</div>
+            <h3>GitHub quarry</h3>
+            <p>Built-in JulianMetaMorph — scans, indexes, and searches GitHub repos so your agent can ground on real code instead of hallucinating imports.</p>
+        </div>
+        <div class="feature">
+            <div class="icon">🗃️</div>
+            <h3>Persistent memory</h3>
+            <p>SQLite-backed memory for agents, thoughts, and engine state. Queryable from MCP. Survives restarts.</p>
+        </div>
+        <div class="feature">
+            <div class="icon">🔌</div>
+            <h3>Works where you code</h3>
+            <p>Standard MCP over stdio. One config line in Claude Desktop, Cursor, or VS Code — no daemons, no cloud round-trip.</p>
+        </div>
+        <div class="feature">
+            <div class="icon">⚡</div>
+            <h3>Julia speed</h3>
+            <p>Native compiled performance. The engine, the tools, the behavioral middleware — all running in the same Julia process. Not a Python wrapper.</p>
+        </div>
+    </div>
+</section>
+
+<section id="install">
+    <h2 class="section-title">Install in <span>30 seconds</span></h2>
+    <div class="install-tabs">
+        <button class="install-tab active" onclick="showTab(event,'claude')">Claude Desktop</button>
+        <button class="install-tab" onclick="showTab(event,'cursor')">Cursor</button>
+        <button class="install-tab" onclick="showTab(event,'vscode')">VS Code</button>
+    </div>
+
+    <div id="claude" class="install-panel active">
+        <p>Add to <code>~/Library/Application Support/Claude/claude_desktop_config.json</code> (macOS) or <code>%APPDATA%\Claude\claude_desktop_config.json</code> (Windows):</p>
+<pre><code>{
+  "mcpServers": {
+    "sparkbyte": {
+      "command": "python",
+      "args": ["-m", "sparkbyte_mcp"],
+      "env": { "SPARKBYTE_LICENSE": "your-license-key-here" }
+    }
+  }
+}</code></pre>
+        <p>Restart Claude Desktop. SparkByte tools appear in the tool picker.</p>
+    </div>
+
+    <div id="cursor" class="install-panel">
+        <p>Open Cursor → Settings → MCP → <em>Add new MCP server</em>:</p>
+<pre><code>Name:    sparkbyte
+Type:    command
+Command: python -m sparkbyte_mcp
+Env:     SPARKBYTE_LICENSE=your-license-key-here</code></pre>
+        <p>Enable the server. Tools available in agent mode.</p>
+    </div>
+
+    <div id="vscode" class="install-panel">
+        <p>Add to <code>.vscode/mcp.json</code> in your workspace (or user settings):</p>
+<pre><code>{
+  "servers": {
+    "sparkbyte": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["-m", "sparkbyte_mcp"],
+      "env": { "SPARKBYTE_LICENSE": "your-license-key-here" }
+    }
+  }
+}</code></pre>
+        <p>GitHub Copilot Chat picks it up automatically.</p>
+    </div>
+</section>
+
+<section id="pricing">
+    <h2 class="section-title">One <span>price</span>.</h2>
+    <div class="pricing">
+        <p class="tier">SparkByte Pro</p>
+        <p class="price">$9<small>/month</small></p>
+        <ul>
+            <li>Full MCP server + all tools</li>
+            <li>Forged-tool creation</li>
+            <li>GitHub quarry search</li>
+            <li>Persistent memory</li>
+            <li>License works in Claude, Cursor, and VS Code</li>
+            <li>Cancel anytime</li>
+        </ul>
+        <a class="btn btn-primary" href="https://buy.stripe.com/8x200c9zf1j0gwo7enew800" style="width:100%;">Start subscription</a>
+    </div>
+</section>
+
+<footer>
+    © 2026 SparkByte · <a href="https://agent.webulacode.com">webulacode</a>
+    <div style="margin-top:0.7rem;">
+        Built on <a href="https://julialang.org/">Julia</a> · MCP over stdio · Your license, your machine.
+    </div>
+</footer>
+
+<script>
+function showTab(ev, id) {
+    document.querySelectorAll('.install-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.install-panel').forEach(p => p.classList.remove('active'));
+    ev.target.classList.add('active');
+    document.getElementById(id).classList.add('active');
+}
+</script>
+</body>
+</html>
