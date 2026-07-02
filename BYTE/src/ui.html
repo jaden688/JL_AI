@@ -323,10 +323,10 @@ body{background:transparent;color:var(--green);font-family:'Consolas','Courier N
     <optgroup label="── OpenRouter ──">
       <option value="anthropic/claude-3.7-sonnet" selected>Claude 3.7 Sonnet</option>
       <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet</option>
-      <option value="google/gemini-2.5-pro">Gemini 2.5 Pro</option>
-      <option value="google/gemini-2.5-flash">Gemini 2.5 Flash</option>
       <option value="openai/gpt-4o">GPT-4o</option>
-      <option value="x-ai/grok-2">Grok 2</option>
+      <option value="x-ai/grok-4.3">Grok 4.3</option>
+      <option value="poolside/laguna-xs.2">Poolside Laguna XS.2</option>
+      <option value="poolside/laguna-xs.2:free">Poolside Laguna XS.2 Free</option>
       <option value="deepseek/deepseek-chat">DeepSeek V3</option>
       <option value="meta-llama/llama-3.3-70b-instruct">Llama 3.3 70B</option>
       <option value="custom">🔧 Custom Model...</option>
@@ -499,10 +499,10 @@ body{background:transparent;color:var(--green);font-family:'Consolas','Courier N
             <optgroup label="── OpenRouter ──">
               <option value="anthropic/claude-3.7-sonnet" selected>Claude 3.7 Sonnet</option>
               <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet</option>
-              <option value="google/gemini-2.5-pro">Gemini 2.5 Pro</option>
-              <option value="google/gemini-2.5-flash">Gemini 2.5 Flash</option>
               <option value="openai/gpt-4o">GPT-4o</option>
-              <option value="x-ai/grok-2">Grok 2</option>
+              <option value="x-ai/grok-4.3">Grok 4.3</option>
+              <option value="poolside/laguna-xs.2">Poolside Laguna XS.2</option>
+              <option value="poolside/laguna-xs.2:free">Poolside Laguna XS.2 Free</option>
               <option value="deepseek/deepseek-chat">DeepSeek V3</option>
               <option value="meta-llama/llama-3.3-70b-instruct">Llama 3.3 70B</option>
               <option value="custom">🔧 Custom Model...</option>
@@ -724,6 +724,22 @@ const searchInput=$('search-input'), searchResults=$('search-results');
 const sbFile=$('sb-file'), sbPos=$('sb-pos'), sbLang=$('sb-lang'), sbStatus=$('sb-status');
 const ctxMenu=$('ctx-menu');
 
+const MODEL_ALIASES = {
+  'x-ai/grok-2': 'x-ai/grok-4.3',
+  'x-ai/grok-2-1212': 'x-ai/grok-4.3',
+  'x-ai/grok-2-mini': 'x-ai/grok-4.3',
+  'x-ai/grok-3': 'x-ai/grok-4.3',
+  'x-ai/grok-3-mini': 'x-ai/grok-4.3',
+  'x-ai/grok-4.1-fast': 'x-ai/grok-4.3',
+  'poolside': 'poolside/laguna-xs.2',
+  'poolside/laguna': 'poolside/laguna-xs.2',
+  'poolside/laguna-m.1': 'poolside/laguna-xs.2',
+  'poolside/laguna-m.1:free': 'poolside/laguna-xs.2:free'
+};
+function normalizeModelId(model){
+  return MODEL_ALIASES[model] || model;
+}
+
 /* ====== WEBSOCKET ====== */
 let _isGenerating = false;
 function _setGenerating(v){
@@ -738,7 +754,12 @@ function abortGeneration(){
 }
 function connect(){
   ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws');
-  ws.onopen=()=>{sbStatus.textContent='● Connected';sbStatus.style.color='var(--green)';loadAgents();};
+  ws.onopen=()=>{sbStatus.textContent='● Connected';sbStatus.style.color='var(--green)';loadAgents();
+    // Boot priority: restore the user's last-chosen model (custom takes precedence
+    // over any hardcoded server default). Re-applies it to the engine on connect.
+    const savedModel=normalizeModelId(localStorage.getItem('sb_model'));
+    if(savedModel){handleCustomModelApply(savedModel);}
+  };
   ws.onclose=()=>{sbStatus.textContent='● Disconnected';sbStatus.style.color='#f44';_setGenerating(false);setTimeout(connect,1500);};
   ws.onmessage=e=>{
     const d=JSON.parse(e.data);
@@ -1379,18 +1400,22 @@ function populateAgents(names){
 agentSelect.onchange=e=>send({type:'agent_change',agent:e.target.value});
 modelSelect.onchange=e=>{
   const customModelInput = document.getElementById('custom-model-input');
-  if (e.target.value === 'custom') {
+  const model = normalizeModelId(e.target.value);
+  if (model === 'custom') {
     customModelInput.style.display = 'inline-block';
     customModelInput.value = '';
     customModelInput.focus();
   } else {
     customModelInput.style.display = 'none';
-    send({type:'model_change',model:e.target.value});
+    if (modelSelect.value !== model) modelSelect.value = model;
+    localStorage.setItem('sb_model', model);
+    send({type:'model_change',model});
   }
 };
 
 const customModelInput = document.getElementById('custom-model-input');
 function handleCustomModelApply(val) {
+  val = normalizeModelId(val);
   if (!val || val === '') return;
   const settingsModelEl = document.getElementById('settings-model');
   
@@ -1420,7 +1445,8 @@ function handleCustomModelApply(val) {
   
   modelSelect.value = val;
   if (settingsModelEl) settingsModelEl.value = val;
-  
+
+  localStorage.setItem('sb_model', val);
   send({type:'model_change',model:val});
 }
 

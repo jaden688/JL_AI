@@ -71,12 +71,12 @@ const TOOLS_SCHEMA = [Dict("function_declarations" => [
     ),
     Dict(
         "name" => "execute_code",
-        "description" => "Execute a snippet of Julia or Python code and return stdout.",
+        "description" => "Execute a self-contained snippet of Julia or Python code and return stdout. Set language explicitly; if omitted, obvious Python imports/defs are inferred as Python.",
         "parameters" => Dict(
             "type" => "OBJECT",
             "properties" => Dict(
                 "code"     => Dict("type" => "STRING", "description" => "Source code to execute"),
-                "language" => Dict("type" => "STRING", "description" => "'julia' or 'python' (default: julia)")
+                "language" => Dict("type" => "STRING", "description" => "'julia' or 'python'. Use 'python' for PIL/Pillow, matplotlib, pandas, ctypes, and other Python libraries.", "enum" => ["julia", "python"])
             ),
             "required" => ["code"]
         )

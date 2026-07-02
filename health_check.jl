@@ -145,6 +145,15 @@ function _scan_ws_types(byte_jl::String)
         # local payload key, but it is dispatched on "cmd" not "type", so this
         # string never actually appears as a WS message discriminator.
         "builder_cmd",
+        # JSON Schema primitive types — appear as `"type"=>"string"` etc. inside
+        # tool-parameter schema normalization, not as WS message discriminators.
+        "string",
+        "object",
+        "number",
+        "integer",
+        "boolean",
+        "array",
+        "null",
     ])
 
     for t in sort(collect(setdiff(sent, handled, noise)))

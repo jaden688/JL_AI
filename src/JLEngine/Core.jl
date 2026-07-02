@@ -67,7 +67,7 @@ event_symbol is one of :analyze_start, :analyze_done, :record_turn, :run_turn, :
 """
 function set_cognitive_callback!(engine::JLEngineCore, fn)
     engine.cognitive_callback = fn
-    return nothing
+    return
 end
 
 function set_agent!(engine::JLEngineCore, agent_name::AbstractString)

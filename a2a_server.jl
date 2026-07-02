@@ -150,7 +150,7 @@ function _a2a_get_task(db, id; history_length::Int=0)
     args = Dict{String,Any}()
     if !ismissing(r.args) && !isempty(strip(String(r.args)))
         parsed_args = try JSON.parse(String(r.args)) catch; nothing end
-        parsed_args isa Dict && (args = Dict{String,Any}(parsed_args))
+        parsed_args isa AbstractDict && (args = Dict{String,Any}(parsed_args))
     end
 
     context_id = string(get(args, "contextId", get(args, "context_id", r.id)))
@@ -162,7 +162,7 @@ function _a2a_get_task(db, id; history_length::Int=0)
         parsed_result = try JSON.parse(String(r.result)) catch; nothing end
     end
 
-    if parsed_result isa Dict && (
+    if parsed_result isa AbstractDict && (
         lowercase(string(get(parsed_result, "kind", ""))) == "task" ||
         (haskey(parsed_result, "id") && haskey(parsed_result, "contextId") && haskey(parsed_result, "status"))
     )
@@ -172,7 +172,7 @@ function _a2a_get_task(db, id; history_length::Int=0)
         history = history isa AbstractVector ? collect(history) : Any[]
         input_text = string(get(args, "input", get(args, "text", ismissing(r.error) ? "" : string(r.error))))
         user_message = get(args, "message", nothing)
-        if !(user_message isa Dict)
+        if !(user_message isa AbstractDict)
             user_message = Dict(
                 "role" => "ROLE_USER",
                 "parts" => _a2a_message_parts(input_text),
@@ -216,7 +216,7 @@ function _a2a_get_task(db, id; history_length::Int=0)
             "artifacts" => artifacts,
             "metadata" => begin
                 metadata_value = get(args, "metadata", Dict{String,Any}())
-                metadata_value isa Dict ? Dict{String,Any}(metadata_value) : Dict{String,Any}()
+                metadata_value isa AbstractDict ? Dict{String,Any}(metadata_value) : Dict{String,Any}()
             end,
         )
         if agent_message !== nothing
@@ -251,11 +251,11 @@ end
 function _a2a_result_text(result)::String
     if result isa AbstractString
         return String(result)
-    elseif result isa Dict && haskey(result, "text")
+    elseif result isa AbstractDict && haskey(result, "text")
         return string(result["text"])
-    elseif result isa Dict && haskey(result, "data") && result["data"] isa AbstractString
+    elseif result isa AbstractDict && haskey(result, "data") && result["data"] isa AbstractString
         return string(result["data"])
-    elseif result isa Dict && haskey(result, "error")
+    elseif result isa AbstractDict && haskey(result, "error")
         return string(result["error"])
     end
     return JSON.json(result)
@@ -275,7 +275,7 @@ function _a2a_task_artifact(result, tool::AbstractString; name::Union{Nothing,Ab
     parts = Any[]
     if result isa AbstractString
         push!(parts, Dict("text" => String(result), "mediaType" => "text/plain"))
-    elseif result isa Dict
+    elseif result isa AbstractDict
         if haskey(result, "text")
             push!(parts, Dict("text" => string(result["text"]), "mediaType" => "text/plain"))
         end
@@ -330,7 +330,7 @@ function _a2a_normalize_message!(message::Dict{String,Any})
     normalized_parts = Any[]
     if parts isa AbstractVector
         for part in parts
-            part isa Dict || continue
+            part isa AbstractDict || continue
             item = Dict{String,Any}(part)
             if haskey(item, "mimeType") && !haskey(item, "mediaType")
                 item["mediaType"] = item["mimeType"]
@@ -343,7 +343,7 @@ function _a2a_normalize_message!(message::Dict{String,Any})
         end
     end
     message["parts"] = normalized_parts
-    if haskey(message, "metadata") && message["metadata"] isa Dict
+    if haskey(message, "metadata") && message["metadata"] isa AbstractDict
         message["metadata"] = Dict{String,Any}(message["metadata"])
     end
     return message
@@ -354,10 +354,10 @@ function _a2a_normalize_task!(task::Dict{String,Any})
     task["id"] = string(get(task, "id", ""))
     task["contextId"] = string(get(task, "contextId", get(task, "context_id", task["id"])))
 
-    status = haskey(task, "status") && task["status"] isa Dict ? Dict{String,Any}(task["status"]) : Dict{String,Any}()
+    status = haskey(task, "status") && task["status"] isa AbstractDict ? Dict{String,Any}(task["status"]) : Dict{String,Any}()
     status["state"] = _a2a_proto_task_state(string(get(status, "state", "TASK_STATE_SUBMITTED")))
     status["timestamp"] = string(get(status, "timestamp", string(now(UTC))))
-    if haskey(status, "message") && status["message"] isa Dict
+    if haskey(status, "message") && status["message"] isa AbstractDict
         status["message"] = _a2a_normalize_message!(Dict{String,Any}(status["message"]))
     end
     task["status"] = status
@@ -366,7 +366,7 @@ function _a2a_normalize_task!(task::Dict{String,Any})
     normalized_history = Any[]
     if history isa AbstractVector
         for item in history
-            item isa Dict || continue
+            item isa AbstractDict || continue
             push!(normalized_history, _a2a_normalize_message!(Dict{String,Any}(item)))
         end
     end
@@ -376,7 +376,7 @@ function _a2a_normalize_task!(task::Dict{String,Any})
     normalized_artifacts = Any[]
     if artifacts isa AbstractVector
         for artifact in artifacts
-            artifact isa Dict || continue
+            artifact isa AbstractDict || continue
             item = Dict{String,Any}(artifact)
             if haskey(item, "artifact_id") && !haskey(item, "artifactId")
                 item["artifactId"] = item["artifact_id"]
@@ -386,7 +386,7 @@ function _a2a_normalize_task!(task::Dict{String,Any})
             normalized_parts = Any[]
             if parts isa AbstractVector
                 for part in parts
-                    part isa Dict || continue
+                    part isa AbstractDict || continue
                     p = Dict{String,Any}(part)
                     if haskey(p, "mimeType") && !haskey(p, "mediaType")
                         p["mediaType"] = p["mimeType"]
@@ -404,7 +404,7 @@ function _a2a_normalize_task!(task::Dict{String,Any})
     end
     task["artifacts"] = normalized_artifacts
 
-    if haskey(task, "metadata") && task["metadata"] isa Dict
+    if haskey(task, "metadata") && task["metadata"] isa AbstractDict
         task["metadata"] = Dict{String,Any}(task["metadata"])
     else
         task["metadata"] = Dict{String,Any}()
@@ -688,12 +688,12 @@ function _a2a_is_terminal_task_state(state::AbstractString)::Bool
 end
 
 function _a2a_message_text(message)::String
-    message isa Dict || return ""
+    message isa AbstractDict || return ""
     parts = get(message, "parts", Any[])
     texts = String[]
     if parts isa AbstractVector
         for part in parts
-            part isa Dict || continue
+            part isa AbstractDict || continue
             txt = get(part, "text", nothing)
             if txt !== nothing
                 s = strip(String(txt))
@@ -749,13 +749,13 @@ function _a2a_stream_response(task::Dict{String,Any}; event::AbstractString="tas
 end
 
 function _a2a_status_update_payload(task::Dict{String,Any})::Dict{String,Any}
-    status = haskey(task, "status") && task["status"] isa Dict ? Dict{String,Any}(task["status"]) : Dict{String,Any}()
+    status = haskey(task, "status") && task["status"] isa AbstractDict ? Dict{String,Any}(task["status"]) : Dict{String,Any}()
     payload = Dict{String,Any}(
         "taskId" => string(get(task, "id", "")),
         "contextId" => string(get(task, "contextId", "")),
         "status" => status,
     )
-    metadata = haskey(task, "metadata") && task["metadata"] isa Dict ? Dict{String,Any}(task["metadata"]) : Dict{String,Any}()
+    metadata = haskey(task, "metadata") && task["metadata"] isa AbstractDict ? Dict{String,Any}(task["metadata"]) : Dict{String,Any}()
     isempty(metadata) || (payload["metadata"] = metadata)
     return payload
 end
@@ -764,7 +764,7 @@ function _a2a_push_config_row_to_dict(r)::Dict{String,Any}
     auth = Dict{String,Any}()
     if !ismissing(r.authentication_json) && !isempty(strip(String(r.authentication_json)))
         parsed_auth = try JSON.parse(String(r.authentication_json)) catch; nothing end
-        parsed_auth isa Dict && (auth = Dict{String,Any}(parsed_auth))
+        parsed_auth isa AbstractDict && (auth = Dict{String,Any}(parsed_auth))
     end
     return Dict{String,Any}(
         "id" => string(r.id),
@@ -819,9 +819,9 @@ function _a2a_upsert_push_notification_config!(
     isempty(url) && error("push notification config url is required")
     token = string(get(params, "token", ""))
     auth = get(params, "authentication", Dict{String,Any}())
-    auth_json = auth isa Dict ? JSON.json(auth) : "{}"
+    auth_json = auth isa AbstractDict ? JSON.json(auth) : "{}"
     metadata = get(params, "metadata", Dict{String,Any}())
-    metadata_json = metadata isa Dict ? JSON.json(metadata) : "{}"
+    metadata_json = metadata isa AbstractDict ? JSON.json(metadata) : "{}"
     now_text = string(now(UTC))
     SQLite.execute(db, """
         INSERT OR REPLACE INTO a2a_push_notification_configs
@@ -851,7 +851,7 @@ function _a2a_dispatch_push_notifications!(db::SQLite.DB, task::Dict{String,Any}
         token = strip(String(get(cfg, "token", "")))
         isempty(token) || push!(headers, "X-A2A-Token" => token)
         auth = get(cfg, "authentication", Dict{String,Any}())
-        if auth isa Dict && haskey(auth, "scheme") && haskey(auth, "credentials")
+        if auth isa AbstractDict && haskey(auth, "scheme") && haskey(auth, "credentials")
             scheme = isempty(strip(String(auth["scheme"]))) ? "Bearer" : strip(String(auth["scheme"]))
             creds = strip(String(auth["credentials"]))
             isempty(creds) || push!(headers, "Authorization" => "$(scheme) $(creds)")
@@ -866,19 +866,19 @@ function _a2a_dispatch_push_notifications!(db::SQLite.DB, task::Dict{String,Any}
 end
 
 function _a2a_extract_push_config(params::AbstractDict)
-    if haskey(params, "taskPushNotificationConfig") && params["taskPushNotificationConfig"] isa Dict
+    if haskey(params, "taskPushNotificationConfig") && params["taskPushNotificationConfig"] isa AbstractDict
         return Dict{String,Any}(params["taskPushNotificationConfig"])
-    elseif haskey(params, "task_push_notification_config") && params["task_push_notification_config"] isa Dict
+    elseif haskey(params, "task_push_notification_config") && params["task_push_notification_config"] isa AbstractDict
         return Dict{String,Any}(params["task_push_notification_config"])
-    elseif haskey(params, "pushNotification") && params["pushNotification"] isa Dict
+    elseif haskey(params, "pushNotification") && params["pushNotification"] isa AbstractDict
         return Dict{String,Any}(params["pushNotification"])
-    elseif haskey(params, "pushNotificationConfig") && params["pushNotificationConfig"] isa Dict
+    elseif haskey(params, "pushNotificationConfig") && params["pushNotificationConfig"] isa AbstractDict
         return Dict{String,Any}(params["pushNotificationConfig"])
     elseif haskey(params, "configuration")
         configuration = params["configuration"]
         if configuration isa AbstractDict
             for key in ("taskPushNotificationConfig", "task_push_notification_config", "pushNotification", "pushNotificationConfig")
-                if haskey(configuration, key) && configuration[key] isa Dict
+                if haskey(configuration, key) && configuration[key] isa AbstractDict
                     return Dict{String,Any}(configuration[key])
                 end
             end
@@ -893,9 +893,9 @@ function _a2a_handle_message_rpc(req::HTTP.Request, db::SQLite.DB, rpc_id, meth:
     auth_err !== nothing && return auth_err
 
     message = get(params, "message", Dict{String,Any}())
-    message = message isa Dict ? Dict{String,Any}(message) : Dict{String,Any}()
+    message = message isa AbstractDict ? Dict{String,Any}(message) : Dict{String,Any}()
     configuration = get(params, "configuration", Dict{String,Any}())
-    configuration = configuration isa Dict ? Dict{String,Any}(configuration) : Dict{String,Any}()
+    configuration = configuration isa AbstractDict ? Dict{String,Any}(configuration) : Dict{String,Any}()
 
     task_id = string(get(message, "taskId", get(params, "taskId", get(params, "id", string(uuid4())))))
     current_task = _a2a_get_task(db, task_id)
@@ -950,7 +950,7 @@ function _a2a_handle_message_rpc(req::HTTP.Request, db::SQLite.DB, rpc_id, meth:
         "toolArgs" => args,
         "history" => vcat(existing_history, [user_message]),
         "configuration" => configuration,
-        "metadata" => haskey(params, "metadata") && params["metadata"] isa Dict ? Dict{String,Any}(params["metadata"]) : Dict{String,Any}(),
+        "metadata" => haskey(params, "metadata") && params["metadata"] isa AbstractDict ? Dict{String,Any}(params["metadata"]) : Dict{String,Any}(),
     )
     push_cfg !== nothing && (task_args["taskPushNotificationConfig"] = Dict{String,Any}(push_cfg))
     _a2a_log_task!(db, task_id, api_key, text, tool, task_args)
@@ -963,7 +963,7 @@ function _a2a_handle_message_rpc(req::HTTP.Request, db::SQLite.DB, rpc_id, meth:
     push!(existing_history, agent_message)
 
     artifacts = status_state == "TASK_STATE_COMPLETED" ? [ _a2a_task_artifact(result, tool) ] : Any[]
-    metadata = haskey(task_args, "metadata") && task_args["metadata"] isa Dict ? Dict{String,Any}(task_args["metadata"]) : Dict{String,Any}()
+    metadata = haskey(task_args, "metadata") && task_args["metadata"] isa AbstractDict ? Dict{String,Any}(task_args["metadata"]) : Dict{String,Any}()
     metadata["tool"] = tool
     metadata["elapsed_ms"] = elapsed
     metadata["request_chars"] = length(text)
@@ -1035,7 +1035,7 @@ function _a2a_handle_tasks_cancel_rpc(req::HTTP.Request, db::SQLite.DB, rpc_id, 
     history = haskey(task, "history") && task["history"] isa AbstractVector ? collect(task["history"]) : Any[]
     cancel_message = _a2a_message_record("agent", "Task canceled", task_id, context_id)
     push!(history, cancel_message)
-    metadata = haskey(task, "metadata") && task["metadata"] isa Dict ? Dict{String,Any}(task["metadata"]) : Dict{String,Any}()
+    metadata = haskey(task, "metadata") && task["metadata"] isa AbstractDict ? Dict{String,Any}(task["metadata"]) : Dict{String,Any}()
     metadata["canceled"] = true
     metadata["cancelled_at"] = string(now(UTC))
     task = _a2a_task_snapshot(task_id, context_id, "TASK_STATE_CANCELED", history, get(task, "artifacts", Any[]), metadata; status_message=cancel_message)

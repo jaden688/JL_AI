@@ -115,6 +115,12 @@ function _open_memory_db(root::String)
 end
 
 function _start_browser_context()
+    try
+        pyimport("playwright.sync_api")
+    catch e
+        @warn "Browser stack unavailable — Playwright not installed (`python -m playwright install`). browse_url is disabled until Python deps are present." exception=(e, catch_backtrace())
+        return (; pw_instance=nothing, browser=nothing, browser_context=nothing)
+    end
     println("👁️  Initializing Web Eyes...")
     sync_playwright = pyimport("playwright.sync_api").sync_playwright
     pw_instance = sync_playwright().__enter__()

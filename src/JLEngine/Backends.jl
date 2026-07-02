@@ -1,7 +1,7 @@
 using HTTP
 
 const DEFAULT_OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
-const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-3-haiku"
+const DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-v4-flash"
 
 abstract type AbstractBackend end
 
@@ -126,12 +126,29 @@ function generate(backend::OpenRouterBackend, messages; options=Dict{String, Any
 
         if haskey(data, "choices") && !isempty(data["choices"])
             choice = data["choices"][1]
-            text = String(get(get(choice, "message", Dict()), "content", ""))
+            content = get(get(choice, "message", Dict()), "content", "")
+            text = content === nothing ? "" : String(content)
+            if isempty(strip(text))
+                finish_reason = get(choice, "finish_reason", "unknown")
+                return "[ERROR: Empty response from OpenRouter model $(model) (finish_reason=$(finish_reason)).]", Dict{String, Any}("error" => "empty_response", "model" => model, "backend" => "openrouter", "finish_reason" => finish_reason)
+            end
             return text, Dict{String, Any}("model" => model, "backend" => "openrouter", "finish_reason" => get(choice, "finish_reason", "unknown"))
         end
 
         return "[ERROR: Unexpected response format from OpenRouter.]", Dict{String, Any}("error" => "bad_format", "raw" => data)
     catch exc
+        if exc isa HTTP.Exceptions.StatusError
+            body = String(exc.response.body)
+            try
+                data = _materialize_json(JSON3.read(body))
+                if haskey(data, "error")
+                    err_msg = data["error"] isa AbstractDict ? get(data["error"], "message", string(data["error"])) : string(data["error"])
+                    return "[ERROR: OpenRouter returned an error. Details: $(err_msg)]", Dict{String, Any}("error" => err_msg, "status" => exc.status)
+                end
+            catch
+            end
+            return "[ERROR: OpenRouter returned HTTP $(exc.status).]", Dict{String, Any}("error" => body, "status" => exc.status)
+        end
         return "[ERROR: Could not connect to OpenRouter.]", Dict{String, Any}("error" => sprint(showerror, exc))
     end
 end

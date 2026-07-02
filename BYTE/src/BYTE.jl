@@ -25,7 +25,7 @@ itself (`/health`, `/`, WebSocket upgrades).  Return `nothing` to 404.
 """
 function register_extra_http_handler!(fn)
     _EXTRA_HTTP_HANDLER[] = fn
-    return nothing
+    return
 end
 
 """
@@ -79,7 +79,7 @@ function install_cognitive_callback!(engine)
                             "reply_len"=>get(snapshot,"reply_len",0)))
         end
     end)
-    return nothing
+    return
 end
 
 # --- Session State ---
@@ -93,6 +93,13 @@ const _GEMMA_MODELS = [
     "google/gemma-2-27b-it", "google/gemma-2-9b-it"
 ]
 const _NO_TOOL_MODELS = String[]
+const _NO_TOOL_MODEL_PREFIXES = ["x-ai/", "poolside/"]
+
+function _model_supports_tools(model::AbstractString)::Bool
+    model in _NO_TOOL_MODELS && return false
+    any(prefix -> startswith(model, prefix), _NO_TOOL_MODEL_PREFIXES) && return false
+    return true
+end
 
 # Confirmation flag and pending store
 const REQUIRE_CONFIRM = Ref(false)  # UI can confirm tool runs, but keep opt-in until we want approval gates
@@ -231,11 +238,12 @@ function _execute_tool_call(ws, engine, name::String, args; loop_iter::Int=0)
             fetch(task)
         catch e
             inner = e isa TaskFailedException ? e.task.exception : e
+            @warn "BYTE tool dispatch crashed" tool=name exception=(inner, catch_backtrace())
             Dict("error" => "Tool '$name' crashed: $(first(string(inner), 300))")
         end
     end
     elapsed = round(Int, (datetime2unix(now()) - t0) * 1000)
-    result_dict = result isa Dict ? result : Dict("result" => string(result))
+    result_dict = result isa AbstractDict ? result : Dict("result" => string(result))
 
     _send_tool_done(ws, name, result_dict, elapsed)
     log_tool_result(name, result_dict, loop_iter; elapsed_ms=elapsed)
@@ -374,7 +382,7 @@ If you think you cannot create a file — you are wrong. Use write_file.
 --- TOOL WORKFLOW FOR COMMON TASKS ---
 "Create an HTML page"    → write_file(path, html_content) then verify with list_files
 "Run a web server"       → write_file the files first, then run_command to launch server
-"Generate an image"      → execute_code with Python/matplotlib, write output to absolute path
+"Generate an image"      → execute_code with language="python", write output to absolute path
 "Research something"     → google_search or browse_url directly
 "Add a capability"       → forge_new_tool with tool_<name>(args::Dict) function
 "Store something"        → remember, then recall later
@@ -408,7 +416,10 @@ run_command is for shell operations, OS queries, and anything needing the live e
 --- PYTHON CAPABILITIES (execute_code with language="python") ---
 Available Python packages: Pillow, pywin32/ctypes, matplotlib, psutil, numpy, scipy, pandas,
 requests, httpx, sqlite3, json, os, sys, subprocess, pathlib.
+For Pillow text sizing, use ImageDraw.textbbox(...), not the removed textsize API.
 For wallpaper: import ctypes; ctypes.windll.user32.SystemParametersInfoW(20, 0, r"C:\\path\\to.png", 3)
+If a package import fails, report it. Do not run pip from the embedded agent environment unless
+the user asks; if installation is necessary on Windows, prefer py -3 -m pip over bare python -m pip.
 Rule 1 (forge_new_tool only) does NOT restrict Python execute_code — use any package above freely.
 
 --- forge_new_tool CODE RULES ---
@@ -541,13 +552,10 @@ function _handle_builder_cmd(ws, p)
 
     elseif cmd == "terminal_exec"
         command = get(p, "command", "")
-        result = try
-            out = IOBuffer()
-            run(pipeline(_shell_command(command), stdout=out, stderr=out))
-            String(take!(out))
-        catch e
-            "Error: $(string(e))"
-        end
+        shell_result = _run_shell_capture(command)
+        result = get(shell_result, "ok", false) ?
+            get(shell_result, "output", "") :
+            "Error: $(get(shell_result, "error", "command failed"))\n$(get(shell_result, "output", ""))"
         _ws_send(ws, JSON.json(Dict("type"=>"terminal_output", "output"=>result)))
 
     elseif cmd == "list_agents"
@@ -932,7 +940,7 @@ log_ws_message_out(Dict("type"=>"thinking", "text"=>think_text, "delta"=>false))
         end
     end
     # Gemma → force chat mode (no tools)
-    if _current_model in _GEMMA_MODELS
+    if _current_model in _GEMMA_MODELS || !_model_supports_tools(_current_model)
         chat_mode = true
     end
 
@@ -943,7 +951,11 @@ log_ws_message_out(Dict("type"=>"thinking", "text"=>think_text, "delta"=>false))
     # Gemini uses UPPERCASE JSON schema types (STRING, OBJECT, ARRAY…)
     # OAI providers require lowercase (string, object, array…)
     # This runs recursively so forged tools get the same treatment.
-    function _normalize_schema(v::Dict)
+    function _normalize_schema(v::AbstractDict)
+        # Guard against runaway/cyclic schemas (e.g. a forged tool whose
+        # `parameters` is self-referential or pathologically deep). Without
+        # this floor the recursion blows the Julia stack at turn start —
+        # before the agentic loop's try/catch — and poisons every turn.
         out = Dict{String,Any}()
         obj_schema = false
         for (k, val) in v
@@ -951,32 +963,57 @@ log_ws_message_out(Dict("type"=>"thinking", "text"=>think_text, "delta"=>false))
                 lowered = lowercase(val)
                 out[k] = lowered
                 obj_schema = lowered == "object"
-            elseif val isa Dict
-                out[k] = _normalize_schema(val)
-            elseif val isa Vector
-                out[k] = [x isa Dict ? _normalize_schema(x) : x for x in val]
             else
                 out[k] = val
             end
         end
         if obj_schema
             props = get(out, "properties", Dict{String,Any}())
-            out["properties"] = props isa AbstractDict ? Dict{String,Any}(string(pk) => pv for (pk, pv) in pairs(props)) : Dict{String,Any}()
+            normalized_props = Dict{String,Any}()
+            if props isa AbstractDict
+                for (pk, pv) in pairs(props)
+                    if pv isa AbstractDict
+                        prop = Dict{String,Any}(string(k) => v for (k, v) in pairs(pv))
+                        haskey(prop, "type") && prop["type"] isa String && (prop["type"] = lowercase(prop["type"]))
+                        normalized_props[string(pk)] = prop
+                    else
+                        normalized_props[string(pk)] = pv isa Bool ? pv : Dict{String,Any}("type"=>"string", "description"=>string(pv))
+                    end
+                end
+            end
+            out["properties"] = normalized_props
             req = get(out, "required", Any[])
-            out["required"] = req isa AbstractVector ? collect(req) : Any[]
+            out["required"] = req isa AbstractVector ? [string(r) for r in req if haskey(normalized_props, string(r))] : Any[]
         end
         out
     end
-    _normalize_schema(v) = v   # passthrough for non‑Dict
+    _normalize_schema(v) = v   # passthrough for non-Dict
+
+    function _tool_parameters_schema(d)
+        params = _normalize_schema(get(d, "parameters", Dict{String,Any}()))
+        if !(params isa AbstractDict)
+            params = Dict{String,Any}()
+        end
+        params = Dict{String,Any}(string(k) => v for (k, v) in pairs(params))
+        params["type"] = lowercase(string(get(params, "type", "object")))
+        params["type"] != "object" && (params["type"] = "object")
+        props = get(params, "properties", Dict{String,Any}())
+        params["properties"] = props isa AbstractDict ? Dict{String,Any}(string(k) => v for (k, v) in pairs(props)) : Dict{String,Any}()
+        req = get(params, "required", Any[])
+        params["required"] = req isa AbstractVector ? [string(r) for r in req if haskey(params["properties"], string(r))] : Any[]
+        return params
+    end
 
     # Build tool schemas in the format the current provider needs
     all_decls_raw = vcat(TOOLS_SCHEMA[1]["function_declarations"], DYNAMIC_SCHEMA)
-    oai_tools = [Dict("type"=>"function",
-                      "function"=>Dict(
-                          "name"        => d["name"],
-                          "description" => get(d, "description", ""),
-                          "parameters"  => _normalize_schema(get(d, "parameters", Dict()))))
-                 for d in all_decls_raw]
+    oai_tools = (!chat_mode && pp["supports_tools"]) ?
+        [Dict("type"=>"function",
+              "function"=>Dict(
+                  "name"        => d["name"],
+                  "description" => get(d, "description", ""),
+                  "parameters"  => _tool_parameters_schema(d)))
+         for d in all_decls_raw] :
+        Any[]
 
     # --- Agentic tool loop ---
     final_reply = ""
@@ -1087,6 +1124,10 @@ log_ws_message_out(Dict("type"=>"thinking", "text"=>think_text, "delta"=>false))
             break
         end
         loop_iter += 1
+        if loop_iter > max_tool_loops
+            _trip_tool_guard("exceeded $(max_tool_loops) tool/API loops")
+            break
+        end
         log_api_request(_current_model, gen_config, length(history), loop_iter)
         log_cognitive_api(_current_model, "request", "Loop iteration $loop_iter")
         try
@@ -1098,8 +1139,15 @@ log_ws_message_out(Dict("type"=>"thinking", "text"=>think_text, "delta"=>false))
         env_key = pp["env_key"]
         api_key = isempty(env_key) ? "ollama" : get(ENV, env_key, "")
         if isempty(api_key)
-            wrn = "⚠️ No API key set for provider '$provider' (env: $env_key). Add it in Settings."
-            _ws_send(ws, JSON.json(Dict("type"=>"spark","text"=>wrn))); break
+            wrn = "🔑 **Missing API Key**\n\n" *
+                  "The **$provider** backend needs an API key to work.\n\n" *
+                  "**Set this environment variable:**\n" *
+                  "```\n\$env:$env_key = \"your-api-key-here\"\n```\n\n" *
+                  "Then restart the engine and try again."
+            _ws_send(ws, JSON.json(Dict("type"=>"spark","text"=>wrn)))
+            log_cognitive_api(_current_model, "error", "API key missing: $env_key")
+            @warn "API key missing for provider" provider env_key
+            break
         end
 
         actual_model = if provider == "ollama";  replace(_current_model, "ollama:"=>"")
@@ -1116,7 +1164,8 @@ log_ws_message_out(Dict("type"=>"thinking", "text"=>think_text, "delta"=>false))
         end
 
         headers = ["Content-Type"=>"application/json", "Authorization"=>"Bearer $api_key"]
-        resp = HTTP.post(api_url, headers, JSON.json(payload))
+        api_timeout_s = try parse(Int, get(ENV, "BYTE_API_TIMEOUT_S", "120")) catch; 120 end
+        resp = HTTP.post(api_url, headers, JSON.json(payload); readtimeout=api_timeout_s)
         data = JSON.parse(String(resp.body))
 
         if !haskey(data,"choices") || isempty(data["choices"])
@@ -1171,6 +1220,10 @@ log_ws_message_out(Dict("type"=>"thinking", "text"=>think_text, "delta"=>false))
                 else
                     Dict()
                 end
+                if !_allow_tool_call(tc_name, tc_args)
+                    has_tool = false
+                    break
+                end
                 println("⚡ BYTE tool ($provider): $tc_name")
                 log_cognitive_tool(tc_name, "called", "Model requested tool_$(tc_name)")
                 # Confirmation step
@@ -1195,17 +1248,49 @@ log_ws_message_out(Dict("type"=>"thinking", "text"=>think_text, "delta"=>false))
             log_cognitive_thought("Generated response ($(length(reply_txt)) chars)")
             log_api_response(_current_model, resp.status, length(resp.body), loop_iter;
                 has_text=true, text_preview=reply_txt, finish_reason=finish_reason)
+        else
+            err_msg = "ERROR: Empty response from $provider for model $(_current_model) (finish_reason=$(finish_reason)). Try a different model."
+            _ws_send(ws, JSON.json(Dict("type"=>"spark","text"=>err_msg)))
+            log_api_response(_current_model, resp.status, length(resp.body), loop_iter; error=err_msg, finish_reason=finish_reason)
+            log_cognitive_api(_current_model, "error", err_msg)
         end
 
         !has_tool && break
 
         catch e
             bt  = sprint(showerror, e, catch_backtrace())
-            msg = "FAILURE: $(first(_redact_sensitive_text(e), 300))"
-            out = Dict("type"=>"spark", "text"=>msg)
+            status_body = if e isa HTTP.Exceptions.StatusError
+                try
+                    body = e.response.body
+                    body isa AbstractVector{UInt8} ? String(body) : string(body)
+                catch
+                    string(e)
+                end
+            else
+                ""
+            end
+            # Categorize the error for user-friendly messaging
+            user_msg = if e isa HTTP.Exceptions.StatusError
+                "🚫 **API Error (HTTP $(e.status))**\n\n" *
+                "The $provider server returned an error.\n\n" *
+                "**Check:**\n- Is your API key correct?\n- Is the model name valid?\n- Do you have credits/quota?\n\n" *
+                "Details: $(first(_redact_sensitive_text(status_body), 500))"
+            elseif e isa Base.IOError || occursin(r"timeout|timed out", lowercase(string(e)))
+                "⏱️ **Connection Timeout**\n\n" *
+                "Could not reach the $provider API server in time.\n\n" *
+                "**Try:**\n- Check your internet connection\n- Try a different provider\n- Increase `BYTE_API_TIMEOUT_S` env var"
+            elseif occursin(r"reset|refused|unreachable", string(e))
+                "🔌 **Connection Failed**\n\n" *
+                "Could not connect to the $provider API endpoint.\n\n" *
+                "**Check:**\n- Is the endpoint URL correct?\n- Is your internet working?\n- Is the provider's service running?"
+            else
+                "❌ **API Error**\n\n" *
+                "$(first(_redact_sensitive_text(e), 200))"
+            end
+            out = Dict("type"=>"spark", "text"=>user_msg)
             _ws_send(ws, JSON.json(out)); log_ws_message_out(out)
             log_error("api_loop:iter_$loop_iter", e; stacktrace_str=bt)
-            log_cognitive_thought("⚠️ API error: $(first(string(e), 120))")
+            log_cognitive_api(_current_model, "error", "$(string(typeof(e))): $(first(string(e), 120))")
             break
         end
     end

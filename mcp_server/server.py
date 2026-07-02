@@ -35,22 +35,26 @@ mcp = FastMCP("sparkbyte")
 def _sb(query: str, params: tuple = ()) -> list[dict]:
     if not SB_DB.exists():
         return [{"error": f"sparkbyte_memory.db not found at {SB_DB} — is SparkByte running?"}]
-    con = sqlite3.connect(f"file:{SB_DB}?mode=ro", uri=True)
+    con = sqlite3.connect(SB_DB)
     con.row_factory = sqlite3.Row
     try:
         rows = con.execute(query, params).fetchall()
         return [dict(r) for r in rows]
+    except Exception as e:
+        return [{"error": str(e)}]
     finally:
         con.close()
 
 def _jul(query: str, params: tuple = ()) -> list[dict]:
     if not JUL_DB.exists():
         return [{"error": f"quarry.db not found at {JUL_DB} — is Julian running?"}]
-    con = sqlite3.connect(f"file:{JUL_DB}?mode=ro", uri=True)
+    con = sqlite3.connect(JUL_DB)
     con.row_factory = sqlite3.Row
     try:
         rows = con.execute(query, params).fetchall()
         return [dict(r) for r in rows]
+    except Exception as e:
+        return [{"error": str(e)}]
     finally:
         con.close()
 
@@ -230,6 +234,219 @@ def run_turn(message: str) -> str:
         return f"Error connecting to JLEngine A2A server on port 8082: {e.reason}\nIs SparkByte/JLEngine running? Start it via 'julia sparkbyte.jl' to enable execution."
     except Exception as e:
         return f"Error: {e}"
+
+# ── Ruida laser tools ──────────────────────────────────────────────────────────
+def _ruida_swizzle(data: bytes, magic: int) -> bytes:
+    out = bytearray(len(data))
+    for i, b in enumerate(data):
+        b ^= (b >> 7) & 0xFF
+        b ^= (b << 7) & 0xFF
+        b ^= (b >> 7) & 0xFF
+        b ^= magic
+        b  = (b + 1) & 0xFF
+        out[i] = b
+    return bytes(out)
+
+def _ruida_unswizzle(data: bytes, magic: int) -> bytes:
+    out = bytearray(len(data))
+    for i, b in enumerate(data):
+        b  = (b - 1) & 0xFF
+        b ^= magic
+        b ^= (b >> 7) & 0xFF
+        b ^= (b << 7) & 0xFF
+        b ^= (b >> 7) & 0xFF
+        out[i] = b
+    return bytes(out)
+
+def _enc_coord(mm: float) -> bytes:
+    v = int(abs(mm) * 1000)
+    return bytes([(v >> s) & 0x7F for s in (28, 21, 14, 7, 0)])
+
+def _enc_speed(mm_s: float) -> bytes:
+    v = int(mm_s * 1000)
+    return bytes([(v >> s) & 0x7F for s in (28, 21, 14, 7, 0)])
+
+def _enc_power(pct: float) -> bytes:
+    v = min(int(pct * 163.84), 0x3FFF)
+    return bytes([(v >> 7) & 0x7F, v & 0x7F])
+
+def _decode_response(resp: bytes, rcv_magic: int = 0x88) -> list[dict]:
+    dec = _ruida_unswizzle(resp, rcv_magic)
+    results = []
+    i = 0
+    while i + 6 < len(dec):
+        code = dec[i]
+        axis = dec[i + 1]
+        v = 0
+        for b in dec[i + 2:i + 7]:
+            v = (v << 7) | b
+        results.append({
+            "code": f"0x{code:02X}",
+            "axis": {0: "X", 1: "Y", 2: "Z", 3: "U"}.get(axis, str(axis)),
+            "value_um": v,
+            "value_mm": round(v / 1000, 3),
+        })
+        i += 7
+    return results
+
+@mcp.tool()
+def ruida_status(port: str = "COM3") -> str:
+    """
+    Check Ruida laser controller connection status over serial.
+    Returns port state (CTS/DSR) and any data the machine sends back.
+    The machine responds with position data after receiving a job.
+    Use ruida_send_job() to send a job and read positions back.
+    port: COM port (default COM3)
+    """
+    try:
+        import serial, time
+    except ImportError:
+        return json.dumps({"error": "pyserial not installed — run: pip install pyserial"})
+
+    try:
+        s = serial.Serial(port, 115200, timeout=2)
+        s.rts = True; s.dtr = True
+        time.sleep(0.2)
+        cts = s.cts; dsr = s.dsr
+        # Read any pending data
+        pending = s.read(64)
+        s.close()
+        return json.dumps({
+            "port": port,
+            "connected": cts or dsr,
+            "cts": cts,
+            "dsr": dsr,
+            "pending_bytes": pending.hex() if pending else "",
+            "note": "CTS+DSR=True means machine is powered and connected. Use ruida_send_job() to send a job.",
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e), "port": port})
+
+@mcp.tool()
+def ruida_send_job(
+    port: str = "COM3",
+    filename: str = "MYJOB",
+    origin_x_mm: float = 10.0,
+    origin_y_mm: float = 10.0,
+    width_mm: float = 100.0,
+    height_mm: float = 50.0,
+    speed_mm_s: float = 18.0,
+    power_pct: float = 58.0,
+    shape: str = "rect",
+    auto_start: bool = True,
+) -> str:
+    """
+    Send a laser cut job to the Ruida controller over serial, then auto-start it.
+    Builds an RD job file, transmits it, then sends START_PROCESS (0xD8 0x00) to begin cutting.
+
+    port: COM port (default COM3)
+    filename: name shown on Ruida display (max 9 chars)
+    origin_x_mm / origin_y_mm: job top-left corner on the bed (mm)
+    width_mm / height_mm: job bounding box (mm)
+    speed_mm_s: cut speed (mm/s, typical 15-20 for 6mm MDF)
+    power_pct: laser power 0-100% — HARD LIMIT 60% on this machine
+    shape: 'rect' = rectangle border | 'circle' = circle | 'cross' = crosshair test
+    auto_start: if True (default), sends START_PROCESS after upload so machine begins cutting immediately
+    """
+    try:
+        import serial, time, math
+    except ImportError:
+        return json.dumps({"error": "pyserial not installed"})
+
+    if power_pct > 60:
+        return json.dumps({"error": f"Power {power_pct}% exceeds hard limit of 60% — refused."})
+    if speed_mm_s > 200:
+        return json.dumps({"error": "Speed too high — max 200mm/s for cut layer."})
+
+    SND_MAGIC = 0x11
+    RCV_MAGIC = 0x88
+    ox, oy = origin_x_mm, origin_y_mm
+    w, h   = width_mm, height_mm
+    fname  = filename[:9]
+
+    buf = bytearray()
+    buf += b"\xD8\x12"                                           # RD file start
+    buf += b"\xE7\x01" + fname.encode() + b"\x00"              # SET_FILENAME
+    buf += b"\xE7\x50" + _enc_coord(ox)     + _enc_coord(oy)   # DOC_MIN
+    buf += b"\xE7\x51" + _enc_coord(ox + w) + _enc_coord(oy + h) # DOC_MAX
+    buf += b"\xC9\x02" + _enc_speed(speed_mm_s)               # speed
+    buf += b"\xC6\x01" + _enc_power(max(power_pct - 3, 0))    # min power
+    buf += b"\xC6\x02" + _enc_power(power_pct)                # max power
+    buf += b"\xCA\x06\x00"                                     # cut mode
+
+    def move(x, y): return bytes(b"\x88") + _enc_coord(x) + _enc_coord(y)
+    def cut(x, y):  return bytes(b"\xA8") + _enc_coord(x) + _enc_coord(y)
+
+    if shape == "rect":
+        CR = min(8.0, w / 4, h / 4)
+        buf += move(ox + CR, oy)
+        buf += cut(ox + w - CR, oy)
+        buf += cut(ox + w, oy + CR)
+        buf += cut(ox + w, oy + h - CR)
+        buf += cut(ox + w - CR, oy + h)
+        buf += cut(ox + CR, oy + h)
+        buf += cut(ox, oy + h - CR)
+        buf += cut(ox, oy + CR)
+        buf += cut(ox + CR, oy)
+    elif shape == "circle":
+        r = min(w, h) / 2
+        cx, cy = ox + w / 2, oy + h / 2
+        segs = 64
+        for i in range(segs + 1):
+            a = 2 * math.pi * i / segs
+            px, py = cx + r * math.cos(a), cy + r * math.sin(a)
+            buf += (move if i == 0 else cut)(px, py)
+    elif shape == "cross":
+        cx, cy = ox + w / 2, oy + h / 2
+        buf += move(ox, cy);     buf += cut(ox + w, cy)
+        buf += move(cx, oy);     buf += cut(cx, oy + h)
+    else:
+        return json.dumps({"error": f"Unknown shape '{shape}'. Use: rect | circle | cross"})
+
+    buf += move(0, 0)
+    buf += b"\xD7"   # END_OF_FILE
+
+    payload = _ruida_swizzle(bytes(buf), SND_MAGIC)
+
+    try:
+        s = serial.Serial(port, 115200, timeout=5)
+        s.rts = True; s.dtr = True
+        time.sleep(0.2)
+        for i in range(0, len(payload), 1000):
+            s.write(payload[i:i + 1000])
+            time.sleep(0.01)
+        time.sleep(1.0)
+        resp = s.read(256)
+
+        start_resp = b""
+        if auto_start:
+            # Send START_PROCESS (0xD8 0x00) — the programmatic equivalent of pressing Start on the panel
+            start_cmd = _ruida_swizzle(bytes([0xD8, 0x00]), SND_MAGIC)
+            s.write(start_cmd)
+            time.sleep(0.5)
+            start_resp = s.read(64)
+
+        s.close()
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+    positions = _decode_response(resp, RCV_MAGIC) if resp else []
+    result = {
+        "sent_bytes": len(payload),
+        "filename": fname,
+        "shape": shape,
+        "speed_mm_s": speed_mm_s,
+        "power_pct": power_pct,
+        "origin_mm": [ox, oy],
+        "size_mm": [w, h],
+        "response_bytes": len(resp),
+        "positions_after": positions,
+        "auto_started": auto_start,
+        "start_response_bytes": len(start_resp),
+        "start_response_hex": start_resp.hex() if start_resp else "",
+        "status": "started" if (auto_start and start_resp) else ("job_sent" if resp else "no_response"),
+    }
+    return json.dumps(result, indent=2)
 
 # ── Entry ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":

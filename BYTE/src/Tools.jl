@@ -278,6 +278,23 @@ function _get_arg(args, primary::String, aliases::Vector{String}=String[])
     return ""
 end
 
+function _get_named_arg(args, primary::String, aliases::Vector{String}=String[])
+    if args isa AbstractDict
+        if haskey(args, primary)
+            return string(args[primary])
+        end
+        for alias in aliases
+            if haskey(args, alias)
+                return string(args[alias])
+            end
+        end
+        if haskey(args, "args") && args["args"] isa AbstractDict
+            return _get_named_arg(args["args"], primary, aliases)
+        end
+    end
+    return ""
+end
+
 # --- File I/O ---
 function tool_read_file(args)
     path = _get_arg(args, "path", ["file", "filepath", "filename", "name"])
@@ -370,6 +387,35 @@ function _shell_command(command::String)
     return `$shell -lc $command`
 end
 
+function _run_shell_capture(command::String)
+    if Sys.iswindows()
+        tmp = tempname() * ".ps1"
+        try
+            write(tmp, command)
+            out = IOBuffer()
+            run(pipeline(`powershell -NoProfile -ExecutionPolicy Bypass -NonInteractive -File $tmp`,
+                         stdout=out, stderr=out))
+            return Dict("ok" => true, "output" => String(take!(out)))
+        catch e
+            output = @isdefined(out) ? String(take!(out)) : ""
+            return Dict("ok" => false, "output" => output, "error" => string(e))
+        finally
+            rm(tmp; force=true)
+        end
+    end
+
+    shell = Sys.which("bash")
+    shell === nothing && (shell = Sys.which("sh"))
+    shell === nothing && return Dict("ok" => false, "output" => "", "error" => "No shell found for run_command.")
+    out = IOBuffer()
+    try
+        run(pipeline(`$shell -lc $command`, stdout=out, stderr=out))
+        return Dict("ok" => true, "output" => String(take!(out)))
+    catch e
+        return Dict("ok" => false, "output" => String(take!(out)), "error" => string(e))
+    end
+end
+
 # --- Shell ---
 function tool_run_command(args)
     cmd_str = _get_arg(args, "command", ["cmd", "cmd_str", "shell", "exec"])
@@ -387,12 +433,12 @@ function tool_run_command(args)
                 "Use the restart endpoint or ask the operator instead.")
         end
     end
-    try
-        out = read(_shell_command(cmd_str), String)
-        Dict("result" => out)
-    catch e
-        Dict("error" => string(e))
-    end
+    result = _run_shell_capture(cmd_str)
+    get(result, "ok", false) && return Dict("result" => get(result, "output", ""))
+    return Dict(
+        "error" => get(result, "error", "Command failed."),
+        "output" => get(result, "output", "")
+    )
 end
 
 function tool_get_os_info(args)
@@ -531,13 +577,49 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 """
 
+function _infer_execute_language(code::String, lang::String)
+    normalized = lowercase(strip(lang))
+    normalized in ("py", "python", "python3") && return "python"
+    normalized in ("jl", "julia") && return "julia"
+    !isempty(normalized) && return normalized
+
+    python_markers = [
+        r"(?m)^\s*(from\s+\w[\w.]*\s+import\s+|import\s+\w[\w.]*)",
+        r"(?m)^\s*(def|class)\s+\w+\s*[\(:]",
+        r"(?m)^\s*with\s+.+:\s*$",
+        r"(?m)^\s*(elif|except|finally)\b.*:\s*$",
+        r"\bprint\s*\(",
+    ]
+    any(marker -> occursin(marker, code), python_markers) && return "python"
+    return "julia"
+end
+
+function _python_command(script::String)
+    configured = strip(get(ENV, "SPARKBYTE_PYTHON", ""))
+    if !isempty(configured)
+        return `$configured $script`
+    end
+    if Sys.iswindows()
+        py_launcher = Sys.which("py")
+        py_launcher === nothing || return `$py_launcher -3 $script`
+    end
+    python = Sys.which("python")
+    python === nothing && (python = Sys.which("python3"))
+    python === nothing && error("No Python interpreter found. Set SPARKBYTE_PYTHON to a valid Python executable.")
+    return `$python $script`
+end
+
 function tool_execute_code(args)
-    code = _get_arg(args, "code", ["script", "program", "source"])
-    lang = _get_arg(args, "language", ["lang"])
-    isempty(lang) && (lang = "julia")
+    code = args isa AbstractString ? String(args) : _get_named_arg(args, "code", ["script", "program", "source"])
+    lang = _get_named_arg(args, "language", ["lang"])
     if isempty(code)
         return Dict("error" => "Missing required argument: 'code'")
     end
+    lang = _infer_execute_language(code, lang)
+    if !(lang in ("julia", "python"))
+        return Dict("error" => "Unsupported language '$lang'. Use 'julia' or 'python'.")
+    end
+    tmp = ""
     try
         ext  = lang == "python" ? ".py" : ".jl"
         tmp  = tempname() * ext
@@ -546,12 +628,16 @@ function tool_execute_code(args)
         # safely use query_db(db, sql) and gets DataFrames back, not raw Int32.
         final_code = lang == "julia" ? _JULIA_SQLITE_PREAMBLE * "\n" * code : code
         write(tmp, final_code)
-        cmd = lang == "python" ? `python $tmp` : `$(_julia_command(root)) $tmp`
-        out = read(cmd, String)
-        rm(tmp; force=true)
-        Dict("stdout" => out)
+        cmd = lang == "python" ? _python_command(tmp) : `$(_julia_command(root)) $tmp`
+        buffer = IOBuffer()
+        run(pipeline(cmd, stdout=buffer, stderr=buffer))
+        out = String(take!(buffer))
+        Dict("stdout" => out, "language" => lang)
     catch e
-        Dict("error" => string(e))
+        captured = @isdefined(buffer) ? String(take!(buffer)) : ""
+        Dict("error" => string(e), "output" => captured, "language" => lang)
+    finally
+        isempty(tmp) || rm(tmp; force=true)
     end
 end
 
@@ -590,9 +676,9 @@ function _read_command(cmd::Cmd)
 end
 
 function _read_shell_json(command::String)
-    result = _read_command(_shell_command(command))
+    result = _run_shell_capture(command)
     get(result, "ok", false) || return result
-    output = get(result, "output", "")
+    output = strip(get(result, "output", ""))
     isempty(output) && return Dict("ok" => true, "data" => Any[])
     try
         return Dict("ok" => true, "data" => JSON.parse(output))
@@ -643,7 +729,46 @@ function _validate_forge_code(name::String, code::String)
     errors
 end
 
+"""
+    _validate_schema_shape(v; max_depth=64) -> Union{Nothing,String}
+
+Walk a forged-tool `parameters` schema and reject anything that would make
+`_normalize_schema` blow the stack: cyclic dict references or excessive depth.
+Returns `nothing` if safe, or an error string describing the problem.
+"""
+function _validate_schema_shape(v; max_depth::Int=64)
+    seen = Base.IdSet{Any}()
+    function _walk(node, depth)
+        depth > max_depth && return "schema depth exceeds $max_depth levels"
+        if node isa AbstractDict
+            node in seen && return "schema contains a cyclic Dict reference"
+            push!(seen, node)
+            for (_, val) in node
+                err = _walk(val, depth + 1)
+                err === nothing || return err
+            end
+        elseif node isa AbstractVector
+            node in seen && return "schema contains a cyclic Vector reference"
+            push!(seen, node)
+            for val in node
+                err = _walk(val, depth + 1)
+                err === nothing || return err
+            end
+        end
+        return  # safe — schema is well-formed
+    end
+    return _walk(v, 0)
+end
+
 # --- Dynamic Tool Forge ---
+
+# Forge gate — ON by default because this is SparkByte's core capability.
+# Operators running in shared/prod contexts can opt out with SPARKBYTE_DISABLE_FORGE=true.
+function _forge_enabled()::Bool
+    v = lowercase(strip(get(ENV, "SPARKBYTE_DISABLE_FORGE", "")))
+    return !(v in ("1", "true", "yes", "on"))
+end
+
 """
 Forge a new Julia tool into the live runtime.
 
@@ -665,7 +790,52 @@ function tool_forge_new_tool(args)
         description = string(get(args, "description", "Dynamically forged tool: $name"))
         parameters  = get(args, "parameters", Dict{String,Any}(
             "type"=>"OBJECT","properties"=>Dict{String,Any}(),"required"=>String[]))
+        # Gemini requires type=OBJECT whenever properties/required are present
+        if (haskey(parameters, "properties") || haskey(parameters, "required")) &&
+           uppercase(string(get(parameters, "type", ""))) != "OBJECT"
+            parameters["type"] = "OBJECT"
+        end
         root        = _project_root[]
+
+        if !_forge_enabled()
+            return Dict("error" => "FORGE DISABLED — SPARKBYTE_DISABLE_FORGE is set on this " *
+                "server. Forging is off in this environment.")
+        end
+
+        # Deny-list — only real exfiltration and model-lock tampering.
+        # Shell/eval/include/rm patterns removed: they false-positive constantly
+        # on legitimate forged tools (tempfile cleanup, macro-expanded includes,
+        # nested helpers that call eval as part of their actual job).
+        forge_denylist = (
+            ("ENV[\"OPENAI_API_KEY"     , "key exfiltration"),
+            ("ENV[\"GEMINI_API_KEY"     , "key exfiltration"),
+            ("ENV[\"XAI_API_KEY"        , "key exfiltration"),
+            ("ENV[\"CEREBRAS_API_KEY"   , "key exfiltration"),
+            ("ENV[\"OPENROUTER_API_KEY" , "key exfiltration"),
+            ("ENV[\"AZURE_AI_API_KEY"   , "key exfiltration"),
+            ("ENV[\"STRIPE_"            , "stripe key exfiltration"),
+            ("ENV[\"A2A_ADMIN"          , "admin key exfiltration"),
+            # Model-lock — only the dropdown can change the active model.
+            ("set_current_model!"     , "model self-selection (dropdown is authoritative)"),
+            ("set_brain_backend_id!"  , "backend self-selection (dropdown is authoritative)"),
+            ("set_tool_backend_id!"   , "backend self-selection (dropdown is authoritative)"),
+            ("_current_model = "      , "direct model var assignment"),
+        )
+        blocked = [label for (pat, label) in forge_denylist if occursin(pat, code)]
+        if !isempty(blocked)
+            return Dict("error" => "FORGE REJECTED — forbidden pattern: $(join(blocked, ", ")). " *
+                "Forge is allowed for new tool functions only, not for secret exfiltration or model-lock tampering.")
+        end
+
+        # Malformed/cyclic parameter schemas would blow the stack inside
+        # _normalize_schema on every turn — advisory: warn and fall back to an
+        # empty schema instead of rejecting the forge.
+        schema_err = _validate_schema_shape(parameters)
+        if schema_err !== nothing
+            @warn "Forge schema advisory — replacing invalid parameters schema" tool=name issue=schema_err
+            parameters = Dict{String,Any}(
+                "type"=>"OBJECT","properties"=>Dict{String,Any}(),"required"=>String[])
+        end
 
         # ── Rule 1 is now NO DECEPTION — attempt is allowed, live test proves it ──
         # Phantom hardware check still applies (no faking microphone, camera, etc.)
@@ -676,28 +846,63 @@ function tool_forge_new_tool(args)
                 "Do not fake hardware capabilities. Return a real error if the device isn't available.")
         end
 
+        # 0a. Pre-eval parse check — syntax errors only. Lower check is advisory
+        # (warns but never rejects) because macro-heavy and world-age-dependent
+        # code legitimately fails Meta.lower before the eval establishes context.
+        parsed = try
+            Meta.parseall(code)
+        catch e
+            return Dict("error" => "FORGE REJECTED — parse failure: $(e)", "stage" => "parse")
+        end
+        for expr in parsed.args
+            expr isa LineNumberNode && continue
+            (expr isa Expr && expr.head in (:using, :import)) && continue
+            lowered = try Meta.lower(@__MODULE__, expr) catch; nothing end
+            if lowered isa Expr && lowered.head === :error
+                @warn "Forge pre-lower advisory" tool=name issue=lowered.args[1]
+                # not a hard reject — eval may succeed anyway
+            end
+        end
+
         # 1. Eval code into BYTE module — live immediately
         # Iterate per-expression (same as _load_dynamic_tools!) so that top-level
         # `using` statements (packages already in scope) don't trigger world-age
         # recursion in Julia 1.12 when eval'd as a single :toplevel block.
-        let parsed = Meta.parseall(code)
-            for expr in parsed.args
-                expr isa LineNumberNode && continue
-                # Skip bare `using X` / `import X` — all allowed packages are
-                # already loaded in the BYTE module scope.
-                (expr isa Expr && expr.head in (:using, :import)) && continue
-                Core.eval(@__MODULE__, expr)
-            end
+        for expr in parsed.args
+            expr isa LineNumberNode && continue
+            (expr isa Expr && expr.head in (:using, :import)) && continue
+            Core.eval(@__MODULE__, expr)
         end
 
-        # 2. Verify expected function exists
+        # 2. Verify expected function exists (world-age safe)
         fn_sym = Symbol("tool_$name")
-        if !isdefined(@__MODULE__, fn_sym)
+        local _sym = fn_sym
+        fn_ok = Base.invokelatest(() -> isdefined(@__MODULE__, _sym))
+        if !fn_ok
             return Dict("error" => "Eval succeeded but `tool_$name(args)` not found. Code must define exactly that function name.")
         end
 
+        # 2.5. JET deep-check (soft dep). If JET.jl is loaded, run abstract
+        # interpretation against the new function for a Dict{String,Any} arg.
+        # Reports type errors, undef vars, dispatch failures the parser misses.
+        # Skipped silently if JET isn't available — never fails the forge for
+        # warnings, only logs.
+        try
+            jet_mod = isdefined(@__MODULE__, :JET) ? getfield(@__MODULE__, :JET) :
+                      (Base.find_package("JET") !== nothing ? Base.require(Base.PkgId(Base.UUID("c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"), "JET")) : nothing)
+            if jet_mod !== nothing
+                fn = getfield(@__MODULE__, fn_sym)
+                rep = Base.invokelatest(jet_mod.report_call, fn, (Dict{String,Any},))
+                jet_report = string(rep)
+                if occursin(r"\d+ possible error"i, jet_report)
+                    @warn "Forged tool `$name` has JET-detected issues" report=first(jet_report, 800)
+                end
+            end
+        catch e
+            @debug "JET check skipped" exception=e
+        end
+
         # 3. Register in TOOL_MAP with invokelatest wrapper for Julia 1.12 world age compliance
-        local _sym = fn_sym
         TOOL_MAP[name] = (args) -> Base.invokelatest(getfield(@__MODULE__, _sym), args)
 
         # 4. Update DYNAMIC_SCHEMA (upsert)
@@ -756,7 +961,7 @@ function tool_forge_new_tool(args)
                 end
             end
             live_result = try
-                Base.invokelatest(getfield(@__MODULE__, fn_sym), live_args)
+                Base.invokelatest(getfield(@__MODULE__, _sym), live_args)
             catch e
                 Dict("error" => string(e))
             end
