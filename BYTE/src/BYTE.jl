@@ -1020,7 +1020,7 @@ log_ws_message_out(Dict("type"=>"thinking", "text"=>think_text, "delta"=>false))
     reasoning_accum = ""
     loop_iter   = 0
     prior_history = isempty(history) ? Any[] : history[1:end-1]
-    max_tool_loops = 12
+    max_tool_loops = 30
     max_repeat_tool_calls = 4
     tool_guard_hit = false
     last_tool_signature = ""
@@ -1441,6 +1441,19 @@ function serve(engine; host::String="127.0.0.1", port::Int=8081)
                 HTTP.setheader(stream, "Content-Type"=>"text/html; charset=utf-8")
                 HTTP.startwrite(stream)
                 write(stream, UI_HTML)
+            elseif req.target == "/manifest.webmanifest"
+                log_event("http_serve", Dict{String,Any}("path"=>req.target, "status"=>200))
+                HTTP.setstatus(stream, 200)
+                HTTP.setheader(stream, "Content-Type"=>"application/manifest+json; charset=utf-8")
+                HTTP.startwrite(stream)
+                write(stream, UI_MANIFEST)
+            elseif req.target == "/icon-192.png" || req.target == "/icon-512.png"
+                log_event("http_serve", Dict{String,Any}("path"=>req.target, "status"=>200))
+                HTTP.setstatus(stream, 200)
+                HTTP.setheader(stream, "Content-Type"=>"image/png")
+                HTTP.setheader(stream, "Cache-Control"=>"public, max-age=86400")
+                HTTP.startwrite(stream)
+                write(stream, req.target == "/icon-192.png" ? UI_ICON_192 : UI_ICON_512)
             else
                 # ── Delegate to A2A (and any other registered extra handler) ──
                 extra = _EXTRA_HTTP_HANDLER[]

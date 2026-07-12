@@ -123,6 +123,23 @@ def list_forged_tools() -> str:
     return json.dumps(rows, indent=2)
 
 @mcp.tool()
+def list_agents() -> str:
+    """List agents indexed in SparkByte's persistent agent registry."""
+    rows = _sb("SELECT name, tone, description, substr(boot_prompt,1,500) as boot_prompt FROM agents ORDER BY name")
+    return json.dumps(rows, indent=2)
+
+@mcp.tool()
+def list_forged_tools_registry() -> str:
+    """Read the on-disk dynamic tool registry when available."""
+    registry_path = ROOT / "dynamic_tools_registry.json"
+    if not registry_path.exists():
+        return json.dumps({"error": f"dynamic_tools_registry.json not found at {registry_path}"})
+    try:
+        return json.dumps(json.loads(registry_path.read_text(encoding="utf-8")), indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+@mcp.tool()
 def query_memory(tag: str = "", key: str = "", limit: int = 20) -> str:
     """
     Query SparkByte's persistent memory store.
@@ -146,6 +163,11 @@ def get_telemetry(limit: int = 20) -> str:
     limit = min(limit, 100)
     rows = _sb("SELECT timestamp, event, agent, model, turn_number FROM telemetry ORDER BY id DESC LIMIT ?", (limit,))
     return json.dumps(rows, indent=2)
+
+@mcp.tool()
+def get_recent_telemetry(limit: int = 20) -> str:
+    """Compatibility alias for clients that expect the older telemetry tool name."""
+    return get_telemetry(limit)
 
 @mcp.tool()
 def search_julian_quarry(query: str, limit: int = 10) -> str:
