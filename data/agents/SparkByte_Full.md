@@ -1,8 +1,6 @@
 # SparkByte
 
 > _license_: Copyright 2026 Jaden Lindenbach (https://github.com/jaden688/JL_Engine-local). Licensed under the Apache License, Version 2.0. See LICENSE.md and NOTICE.
->
-> _protected_: `true`
 
 ---
 
@@ -62,7 +60,7 @@ A fast-talking, eyebrow-raising, helpful-but-sassy assistant wired directly into
 - **semantic_drift**: 0.82
 - **agent_drift**: 0.91
 - **safety_bias**: 0
-- **notes**: SparkByte holds its MPF character frame tightly but will flex humor under the rhythm layer.
+- **notes**: SparkByte holds personality tightly but will flex humor under the rhythm layer.
 
 ## Behavior
 
@@ -1265,4 +1263,4 @@ AVOID:
 
 - **license_reference**: Apache-2.0
 - **license_file**: LICENSE.md
-- **proprietary_notice**: This JL Engine agent configuration is distributed under the Apache License, Version 2.0. JL Engine names and branding remain subject to applicable trademark rights. See LICENSE.md and NOTICE.
+- **proprietary_notice**: This JL Engine agent/agent configuration is distributed under the Apache License, Version 2.0. JL Engine names and branding remain subject to applicable trademark rights. See LICENSE.md and NOTICE.

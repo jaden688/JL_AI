@@ -9,6 +9,10 @@
 # Database
 *.db
 *.sqlite
+!sparkbyte_memory.db
+!data/sparkbyte_memory.db
+!data/a2a_accounts.db
+!data/a2a_usage.db
 
 # Julia artifacts
 Manifest.toml

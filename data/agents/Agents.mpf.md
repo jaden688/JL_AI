@@ -1,9 +1,9 @@
-﻿# Agents.mpf
+# Agents.mpf
 
 
 ## The Gremlin
 
-- **agent_file**: ../agents/The_Gremlin_Full.json
+- **agent_file**: The_Gremlin_Full.json
 - **default_memory_mode**: HYBRID
 - **default_backend_id**: openrouter
 - **drive_type**: *(null)*
@@ -13,29 +13,17 @@
 
 ## Spark Byte
 
-- **agent_file**: ../agents/SparkByte_Full.json
-- **default_memory_mode**: HYBRID
-- **default_backend_id**: openrouter
-- **drive_type**: assistant
-- **tags**:
-  - quirky
-  - creative
-  - modular
-
-## Spark Byte Classic
-
-- **agent_file**: ../agents/SparkByte_Full.json
+- **agent_file**: SparkByte_Full.json
 - **default_memory_mode**: HYBRID
 - **default_backend_id**: openrouter
 - **drive_type**: *(null)*
 - **tags**:
   - quirky
   - creative
-  - classic
 
 ## Slappy
 
-- **agent_file**: ../agents/Slappy_Full.json
+- **agent_file**: Slappy_Full.json
 - **default_memory_mode**: HYBRID
 - **default_backend_id**: openrouter
 - **drive_type**: *(null)*
@@ -46,7 +34,7 @@
 
 ## Supervisor
 
-- **agent_file**: ../agents/SparkByte_Full.json
+- **agent_file**: SparkByte_Full.json
 - **default_memory_mode**: HYBRID
 - **default_backend_id**: openrouter
 - **drive_type**: *(null)*
@@ -56,7 +44,7 @@
 
 ## Temporal
 
-- **agent_file**: ../agents/Temporal_Quantum_Agent_Full.json
+- **agent_file**: Temporal_Quantum_Agent_Full.json
 - **default_memory_mode**: HYBRID
 - **default_backend_id**: openrouter
 - **drive_type**: *(null)*
@@ -65,73 +53,13 @@
   - temporal
   - quantum
 
-## Temporal Quantum Agent
+## Balthazar
 
-- **agent_file**: ../agents/Temporal_Quantum_Agent_Full.json
-- **default_backend_id**: openrouter
+- **agent_file**: Balth.json
 - **default_memory_mode**: HYBRID
+- **default_backend_id**: openrouter
 - **drive_type**: *(null)*
 - **tags**:
-  - imported
-  - card-cruncher
-
-## The Ironclad
-
-- **agent_file**: ../agents/The_Ironclad_Full.json
-- **default_backend_id**: openrouter
-- **default_memory_mode**: HYBRID
-- **drive_type**: *(null)*
-- **tags**:
-  - imported
-  - card-cruncher
-
-## Runtime Operator
-
-- **agent_file**: ../agents/RuntimeOperator_Full.json
-- **default_backend_id**: openrouter
-- **default_memory_mode**: HYBRID
-- **drive_type**: *(null)*
-- **tags**:
-  - imported
-  - card-cruncher
-
-## Python Code Powers
-
-- **agent_file**: ../agents/Python_Code_Powers_Full.json
-- **default_backend_id**: openrouter
-- **default_memory_mode**: HYBRID
-- **drive_type**: *(null)*
-- **tags**:
-  - imported
-  - card-cruncher
-
-## Python Code Powers
-
-- **agent_file**: ../agents/Python_Code_Powers_Full.json
-- **default_backend_id**: openrouter
-- **default_memory_mode**: HYBRID
-- **drive_type**: *(null)*
-- **tags**:
-  - imported
-  - card-cruncher
-
-## Trader
-
-- **agent_file**: ../agents/Trader_Full.json
-- **default_backend_id**: openrouter
-- **default_memory_mode**: HYBRID
-- **tags**:
-  - api-endpoint
-  - financial
-  - autonomous
-- **drive_type**: *(null)*
-
-## Unknown
-
-- **agent_file**: ../agents/Unknown_Full.json
-- **default_backend_id**: openrouter
-- **default_memory_mode**: HYBRID
-- **drive_type**: *(null)*
-- **tags**:
-  - imported
-  - card-cruncher
+  - savage
+  - diagnostic
+  - root-cause
