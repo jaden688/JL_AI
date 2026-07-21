@@ -22,6 +22,8 @@ import Dates
 
 const PROJECT_DIR = abspath(joinpath(@__DIR__, ".."))
 
+_looks_true(v) = lowercase(strip(String(v))) in ("1", "true", "yes", "on")
+
 # ── Preflight ─────────────────────────────────────────────────────────────────
 println("\n  ╔══════════════════════════════════════════════╗")
 println("  ║     SparkByte EXE Builder — Preflight        ║")
@@ -117,6 +119,14 @@ using PackageCompiler
 # Re-activate project so create_app sees the right env
 Pkg.activate(PROJECT_DIR)
 
+# Resolve + install the project's deps. No Manifest.toml is committed, so a
+# fresh machine (or a CI runner) has nothing to compile until this runs.
+# Honour the .bat's SPARKBYTE_SKIP_PKG_INSTANTIATE escape hatch for repeat builds.
+if !_looks_true(get(ENV, "SPARKBYTE_SKIP_PKG_INSTANTIATE", "0"))
+    @info "Instantiating project dependencies…"
+    Pkg.instantiate()
+end
+
 # ── Paths ─────────────────────────────────────────────────────────────────────
 const BUILD_TAG  = string("sparkbyte-", Dates.format(Dates.now(), "yyyymmdd-HHMM"))
 const OUTPUT_DIR = joinpath(PROJECT_DIR, "build", BUILD_TAG)
@@ -160,11 +170,15 @@ for db in ("sparkbyte_memory.db", "a2a_accounts.db", "a2a_usage.db")
     isfile(joinpath(PROJECT_DIR, db)) && copy_item(db)
 end
 
+# Executable name + path separator differ per platform.
+const EXE_NAME = Sys.iswindows() ? "sparkbyte.exe" : "sparkbyte"
+const RUN_PATH = Sys.iswindows() ? "bin\\$EXE_NAME" : "./bin/$EXE_NAME"
+
 open(joinpath(OUTPUT_DIR, "ENV_KEYS_GO_HERE.txt"), "w") do io
     write(io, """
 SparkByte Snapshot — ENV Setup
 ================================
-Copy your .env file into this directory before running sparkbyte.exe.
+Copy your .env file into this directory before running $EXE_NAME.
 
 Required:
   GEMINI_API_KEY=...
@@ -176,17 +190,18 @@ Optional:
   REDDIT_CLIENT_SECRET=...
   REDDIT_REFRESH_TOKEN=...
 
-Python (for browser/Mission Control):
+Python (optional — for browser/Mission Control):
   Python 3.10+ on PATH + pip install playwright + playwright install chromium
+  The core engine runs without it; browser features stay dark until it's present.
 
 Run:
-  bin\\sparkbyte.exe
+  $RUN_PATH
 """)
 end
 
 println("\n  ╔══════════════════════════════════════════════╗")
 println("  ║          BUILD COMPLETE                      ║")
 println("  ╠══════════════════════════════════════════════╣")
-println("  ║  EXE: build\\$(BUILD_TAG)\\bin\\sparkbyte.exe")
-println("  ║  Drop your .env into: build\\$(BUILD_TAG)\\")
+println("  ║  App: build/$(BUILD_TAG)/bin/$EXE_NAME")
+println("  ║  Drop your .env into: build/$(BUILD_TAG)/")
 println("  ╚══════════════════════════════════════════════╝\n")
