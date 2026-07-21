@@ -190,9 +190,10 @@ Optional:
   REDDIT_CLIENT_SECRET=...
   REDDIT_REFRESH_TOKEN=...
 
-Python (optional — for browser/Mission Control):
-  Python 3.10+ on PATH + pip install playwright + playwright install chromium
-  The core engine runs without it; browser features stay dark until it's present.
+Browser / Mission Control features:
+  Provisioned automatically on first use — a private Python env + Chromium are
+  fetched into the app's own folder the first time a browser feature runs.
+  Nothing to install by hand. Core engine runs immediately regardless.
 
 Run:
   $RUN_PATH

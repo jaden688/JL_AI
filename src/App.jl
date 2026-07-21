@@ -114,17 +114,61 @@ function _open_memory_db(root::String)
     return db
 end
 
-function _start_browser_context()
+# Whether we've already attempted a Chromium download this process. A genuinely
+# broken environment shouldn't re-trigger the (slow) install on every retry.
+const _CHROMIUM_INSTALL_TRIED = Ref(false)
+
+# Fetch the Chromium binary via Playwright's own installer, using whatever Python
+# interpreter PythonCall/CondaPkg resolved. Returns true if the install ran.
+function _install_chromium()
+    _CHROMIUM_INSTALL_TRIED[] && return false
+    _CHROMIUM_INSTALL_TRIED[] = true
     try
-        pyimport("playwright.sync_api")
+        py_exe = pyconvert(String, pyimport("sys").executable)
+        @info "Installing Chromium for browser features (first run — one-time ~150MB download)…"
+        run(`$py_exe -m playwright install chromium`)
+        return true
     catch e
-        @warn "Browser stack unavailable — Playwright not installed (`python -m playwright install`). browse_url is disabled until Python deps are present." exception=(e, catch_backtrace())
+        @warn "Chromium auto-install failed — browser features stay disabled. The engine runs fine without them." exception=(e, catch_backtrace())
+        return false
+    end
+end
+
+function _start_browser_context()
+    # Python + Playwright are provisioned automatically by CondaPkg on first use
+    # (see CondaPkg.toml) — no system Python required. Every failure path here
+    # degrades gracefully: the core engine never depends on the browser stack.
+    local pw
+    try
+        pw = pyimport("playwright.sync_api")
+    catch e
+        @warn "Playwright unavailable and could not be auto-provisioned — browser features disabled. Engine continues normally." exception=(e, catch_backtrace())
         return (; pw_instance=nothing, browser=nothing, browser_context=nothing)
     end
+
     println("👁️  Initializing Web Eyes...")
-    sync_playwright = pyimport("playwright.sync_api").sync_playwright
-    pw_instance = sync_playwright().__enter__()
-    browser = pw_instance.chromium.launch(headless=true)
+    pw_instance = pw.sync_playwright().__enter__()
+
+    browser = nothing
+    for attempt in 1:2
+        try
+            browser = pw_instance.chromium.launch(headless=true)
+            break
+        catch e
+            # Most common first-run cause: the Chromium binary isn't fetched yet.
+            # Install it once, then retry the launch a single time.
+            if attempt == 1 && _install_chromium()
+                continue
+            end
+            @warn "Chromium launch failed — browser features disabled. Engine continues normally." exception=(e, catch_backtrace())
+            try
+                pw_instance.__exit__(nothing, nothing, nothing)
+            catch
+            end
+            return (; pw_instance=nothing, browser=nothing, browser_context=nothing)
+        end
+    end
+
     browser_context = browser.new_context()
     return (; pw_instance, browser, browser_context)
 end
