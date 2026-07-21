@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>JL Engine — Live Map</title>
 <script src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
+<script src="https://unpkg.com/d3-force-3d@3.0.5/dist/d3-force-3d.min.js"></script>
 <script src="https://unpkg.com/3d-force-graph@1.73.3/dist/3d-force-graph.min.js"></script>
 <style>
   *{margin:0;padding:0;box-sizing:border-box;}
@@ -97,7 +98,8 @@
 
 <script>
 // ── CONFIG ────────────────────────────────────────────────────────────────────
-const WS_URL = `ws://${location.hostname || '127.0.0.1'}:8081`;
+const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const WS_URL = `${wsProto}//${location.hostname || '127.0.0.1'}:8081`;
 const RECONNECT_DELAY = 3000;
 
 // ── AGENT PALETTE ─────────────────────────────────────────────────────────────
@@ -284,6 +286,7 @@ function getLinkWidth(l) {
 function buildEngineGraph() {
   agentInternalView = null;
   document.getElementById('back-btn').style.display = 'none';
+  nodeObjects = {};
 
   const nodes = [];
   const links = [];
@@ -326,6 +329,7 @@ function buildEngineGraph() {
 function buildAgentGraph(agentName) {
   agentInternalView = agentName;
   document.getElementById('back-btn').style.display = 'block';
+  nodeObjects = {};
 
   const nodes = [];
   const links = [];
@@ -490,14 +494,26 @@ function pulseNode(id, intensity = 1.0, duration = 800) {
 }
 
 function refreshNode(id) {
-  // Trigger graph to re-render node color/size
+  const mesh = nodeObjects[id];
+  if (!mesh) return;
   const data = Graph.graphData();
   const node = data.nodes.find(n => n.id === id);
   if (!node) return;
-  Graph.nodeThreeObject()(node); // rebuild mesh
-  // Force color refresh
-  Graph.nodeColor(Graph.nodeColor());
-  Graph.nodeVal(Graph.nodeVal());
+  const activity = activityLevels[id] || 0;
+  if (mesh.material) {
+    mesh.material.emissiveIntensity = 0.15 + activity * 0.6;
+  }
+  const baseSize = node.baseSize || 10;
+  const isCurrentAgent = node.agentName === currentAgent || node.name === currentAgent;
+  const targetSize = isCurrentAgent && node.group === 'agent' ? baseSize * 2.2 + activity * 20 : baseSize + activity * 15;
+  const baseRadius = Math.sqrt(baseSize) * 1.2;
+  const targetRadius = Math.sqrt(targetSize) * 1.2;
+  const scaleFactor = baseRadius > 0 ? targetRadius / baseRadius : 1;
+  mesh.scale.set(scaleFactor, scaleFactor, scaleFactor);
+  const glow = mesh.children[0];
+  if (glow && glow.material) {
+    glow.material.opacity = 0.45 + activity * 0.3;
+  }
 }
 
 function pulseActivePipeline() {
