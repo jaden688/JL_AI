@@ -5,6 +5,7 @@ using HTTP, HTTP.WebSockets, JSON, SQLite, DataFrames, Dates, UUIDs
 include("UI.jl")
 include("Schema.jl")
 include("Tools.jl")
+include("Vault.jl")
 include("MCPClient.jl")
 include("Telemetry.jl")
 

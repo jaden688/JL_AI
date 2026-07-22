@@ -64,3 +64,5 @@ src/jl-engine-local/
 
 # Local MCP connector config (may reference secrets) — keep out of git
 connectors.json
+# Credential vault — never commit
+secrets.vault.json

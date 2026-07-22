@@ -217,6 +217,16 @@ function register_mcp_connectors!(root::String="")
 
         try
             cmd = `$command $args`
+            # Optional per-connector environment. Values may be literals or
+            # "vault:NAME" references resolved from the credential vault at
+            # spawn time — secrets reach the child process env only, never
+            # connectors.json or the model context. An unknown vault name
+            # throws here and is caught below as a failed connector.
+            env_spec = get(spec, "env", nothing)
+            if env_spec isa AbstractDict && !isempty(env_spec)
+                resolved = [string(k) => resolve_secret(string(v); root=root) for (k, v) in pairs(env_spec)]
+                cmd = addenv(cmd, resolved...)
+            end
             conn = mcp_connect_stdio(string(name), cmd)
             MCP_CONNS[string(name)] = conn
             ids = _mcp_register_conn!(conn)
