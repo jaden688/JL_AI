@@ -1,5 +1,12 @@
-haskey(ENV, "JULIA_CONDAPKG_BACKEND") || (ENV["JULIA_CONDAPKG_BACKEND"] = "Null")
-haskey(ENV, "JULIA_PYTHONCALL_EXE") || (ENV["JULIA_PYTHONCALL_EXE"] = "python")
+# NOTE: we intentionally no longer force JULIA_CONDAPKG_BACKEND=Null (nor
+# JULIA_PYTHONCALL_EXE) here. Forcing Null pins PythonCall to a *system* python
+# and defeats the app's self-provisioning — CondaPkg can't bring its own Python
+# for Playwright. The build pipeline (scripts/build_exe.bat +
+# .github/workflows/release.yml) sets the backend to Null explicitly so no Conda
+# env is built during compilation; at the user's runtime both vars are unset, so
+# CondaPkg's default backend provisions Python on first browser use. Devs who
+# want a system python can `export JULIA_CONDAPKG_BACKEND=Null` +
+# `JULIA_PYTHONCALL_EXE=python` themselves.
 
 using PythonCall, SQLite, DataFrames, Dates, JSON, HTTP, Base64
 

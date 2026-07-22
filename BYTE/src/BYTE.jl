@@ -5,6 +5,7 @@ using HTTP, HTTP.WebSockets, JSON, SQLite, DataFrames, Dates, UUIDs
 include("UI.jl")
 include("Schema.jl")
 include("Tools.jl")
+include("MCPClient.jl")
 include("Telemetry.jl")
 
 export init, serve, launch, process_message, install_cognitive_callback!
@@ -36,6 +37,16 @@ Wire live resources (SQLite DB and Playwright browser context) into the tool lay
 function init(db::SQLite.DB, browser_context, project_root::String="")
     init_tools(db, browser_context, project_root)
     !isempty(project_root) && init_telemetry(project_root; db=db)
+
+    # Connect any enabled external MCP servers and expose their tools to the
+    # agent. Opt-in via connectors.json; failures are logged and never fatal.
+    try
+        registered = register_mcp_connectors!(project_root)
+        isempty(registered) || @info "MCP connectors: $(length(registered)) external tool(s) live"
+    catch e
+        @warn "MCP connector registration failed — continuing without external connectors" exception=(e, catch_backtrace())
+    end
+    atexit(mcp_shutdown_all)
 
     # Register cognitive broadcast hook — fires live to terminal panel
     _COGNITIVE_HOOK[] = _broadcast_cognitive
