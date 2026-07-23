@@ -1673,6 +1673,105 @@ function tool_discord_webhook(args)
     end
 end
 
+# ── Caido Integration ──────────────────────────────────────────────────────
+# Talks to a locally-running Caido instance's GraphQL API so agents can browse,
+# search (HTTPQL), and inspect captured HTTP traffic during a turn.
+# Auth: CAIDO_TOKEN env var — the Caido web UI's local session accessToken
+# (Caido tab → DevTools → Application → Local Storage → CAIDO_AUTHENTICATION.accessToken;
+# expires after 7 days, so it needs periodic refresh).
+function _caido_graphql(query::String, variables::Dict, args)
+    base_url = string(get(args, "base_url", get(ENV, "CAIDO_URL", "http://127.0.0.1:8080/graphql")))
+    token    = string(get(args, "token", get(ENV, "CAIDO_TOKEN", "")))
+    isempty(token) && return Dict(
+        "error" => "No Caido token. Set CAIDO_TOKEN env var or pass token directly.",
+        "how_to_get" => "Open the Caido tab → DevTools → Application → Local Storage → CAIDO_AUTHENTICATION → copy accessToken."
+    )
+    headers = ["Content-Type" => "application/json", "Authorization" => "Bearer $token"]
+    body = JSON.json(Dict("query" => query, "variables" => variables))
+    try
+        resp = HTTP.post(base_url, headers, body; status_exception=false)
+        parsed = JSON.parse(String(resp.body))
+        resp.status != 200 && return Dict("error" => "Caido returned HTTP $(resp.status)", "body" => parsed)
+        if haskey(parsed, "errors") && !isempty(parsed["errors"])
+            return Dict("error" => "GraphQL error", "errors" => parsed["errors"])
+        end
+        Dict("data" => get(parsed, "data", nothing))
+    catch e
+        Dict("error" => "Caido request failed: $(string(e))", "hint" => "Is Caido running and reachable at $base_url?")
+    end
+end
+
+const _CAIDO_INTROSPECT_QUERY = """
+{
+  __schema {
+    queryType { fields { name args { name } } }
+    mutationType { fields { name args { name } } }
+  }
+}
+"""
+
+function tool_caido(args)
+    action = string(get(args, "action", "status"))
+
+    if action == "status"
+        result = _caido_graphql("{ __typename }", Dict{String,Any}(), args)
+        haskey(result, "error") ? result : Dict("result" => "Connected to Caido.")
+
+    elseif action == "introspect"
+        result = _caido_graphql(_CAIDO_INTROSPECT_QUERY, Dict{String,Any}(), args)
+        haskey(result, "error") && return result
+        schema = result["data"]["__schema"]
+        summarize(fields) = [Dict("name" => f["name"], "args" => [a["name"] for a in f["args"]]) for f in fields]
+        mut = get(schema, "mutationType", nothing)
+        Dict(
+            "queries"   => summarize(get(schema["queryType"], "fields", [])),
+            "mutations" => mut === nothing ? [] : summarize(get(mut, "fields", [])),
+            "tip"       => "Use action=query with a raw GraphQL string built from these field names."
+        )
+
+    elseif action == "query"
+        query = string(get(args, "query", ""))
+        isempty(query) && return Dict("error" => "action=query requires a 'query' GraphQL string (and optional 'variables').")
+        variables = get(args, "variables", Dict{String,Any}())
+        _caido_graphql(query, variables, args)
+
+    elseif action == "list_requests"
+        filter_q = string(get(args, "filter", ""))
+        limit    = get(args, "limit", 25)
+        q = """
+        query(\$filter: String, \$first: Int) {
+          requests(filter: \$filter, first: \$first) {
+            edges { node { id host port isTls method path response { statusCode length } } }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+        """
+        variables = Dict{String,Any}("first" => limit)
+        !isempty(filter_q) && (variables["filter"] = filter_q)
+        result = _caido_graphql(q, variables, args)
+        haskey(result, "error") && return result
+        Dict("requests" => result["data"]["requests"])
+
+    elseif action == "get_request"
+        id = string(get(args, "id", ""))
+        isempty(id) && return Dict("error" => "action=get_request requires an 'id'.")
+        q = """
+        query(\$id: ID!) {
+          request(id: \$id) {
+            id host port isTls method path query raw
+            response { statusCode length raw }
+          }
+        }
+        """
+        result = _caido_graphql(q, Dict{String,Any}("id" => id), args)
+        haskey(result, "error") && return result
+        Dict("request" => result["data"]["request"])
+
+    else
+        Dict("error" => "Unknown action '$action'. Use: status | introspect | query | list_requests | get_request")
+    end
+end
+
 # ── GitHub Pages Deploy ───────────────────────────────────────────────────────
 # Creates or updates a GitHub Pages site — SparkByte's permanent public home.
 # Uses GITHUB_TOKEN env var. Creates repo if it doesn't exist, pushes index.html,
@@ -1773,6 +1872,7 @@ const TOOL_MAP = Dict{String, Function}(
     "discord_webhook"         => tool_discord_webhook,
     "github_pages_deploy"     => tool_github_pages_deploy,
     "github_pillage"          => tool_github_pillage,
+    "caido"          => tool_caido,
     "remember"       => tool_remember,
     "recall"         => tool_recall,
     "metamorph"      => tool_metamorph,

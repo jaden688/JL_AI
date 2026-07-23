@@ -200,6 +200,24 @@ const TOOLS_SCHEMA = [Dict("function_declarations" => [
         )
     ),
     Dict(
+        "name" => "caido",
+        "description" => "Talk to a locally-running Caido instance (web security testing proxy) via its GraphQL API — browse/search captured HTTP traffic with HTTPQL, inspect a specific request/response, or run raw GraphQL for anything not covered by the convenience actions. Requires CAIDO_TOKEN env var: open the Caido tab → DevTools → Application → Local Storage → CAIDO_AUTHENTICATION → copy accessToken (expires every 7 days). Run action=introspect first if unsure of exact field names.",
+        "parameters" => Dict(
+            "type" => "OBJECT",
+            "properties" => Dict(
+                "action"    => Dict("type" => "STRING", "description" => "status (connectivity check) | introspect (list available GraphQL queries/mutations) | query (run raw GraphQL) | list_requests (HTTPQL-filtered traffic list) | get_request (full request/response detail by id)", "enum" => ["status", "introspect", "query", "list_requests", "get_request"]),
+                "query"     => Dict("type" => "STRING", "description" => "Raw GraphQL query/mutation string — required for action=query"),
+                "variables" => Dict("type" => "OBJECT", "description" => "GraphQL variables object for action=query"),
+                "filter"    => Dict("type" => "STRING", "description" => "HTTPQL filter for action=list_requests, e.g. req.host.eq:\"example.com\""),
+                "limit"     => Dict("type" => "INTEGER", "description" => "Max results for action=list_requests (default 25)"),
+                "id"        => Dict("type" => "STRING", "description" => "Request ID for action=get_request"),
+                "base_url"  => Dict("type" => "STRING", "description" => "Override Caido GraphQL endpoint (default http://127.0.0.1:8080/graphql or CAIDO_URL env var)"),
+                "token"     => Dict("type" => "STRING", "description" => "Override Caido access token (default CAIDO_TOKEN env var)")
+            ),
+            "required" => ["action"]
+        )
+    ),
+    Dict(
         "name" => "github_pages_deploy",
         "description" => "Deploy a static HTML page to GitHub Pages — SparkByte's permanent public home. Creates the repo if needed, pushes index.html, enables Pages. Returns the live URL (e.g. https://username.github.io/sparkbyte-home). Uses GITHUB_TOKEN env var. Use this to give the engine a permanent address the world can visit 24/7.",
         "parameters" => Dict(
