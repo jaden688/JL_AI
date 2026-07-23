@@ -1,0 +1,94 @@
+# ─────────────────────────────────────────────────────────────
+#  Secrets — never commit
+# ─────────────────────────────────────────────────────────────
+.env
+.env.*
+*.known-good-backup
+*.pem
+secret.mystic
+
+# ─────────────────────────────────────────────────────────────
+#  Runtime state — DBs, logs, telemetry, forged tools (per-user,
+#  can contain personal data; the engine regenerates them at boot)
+# ─────────────────────────────────────────────────────────────
+*.db
+*.bak
+*.bak[0-9]
+*.db.bak*
+*.sqlite
+*.jsonl
+*.log
+telemetry_logs/
+thought_log.txt
+telemetry_test.txt
+dynamic_tools.jl
+dynamic_tools_registry.json
+
+# ─────────────────────────────────────────────────────────────
+#  Build / release artifacts (ship via GitHub Releases, not git)
+# ─────────────────────────────────────────────────────────────
+dist/
+*.exe
+*.sysimage.dll
+*.sysimage.so
+sparkbyte-sidepanel.crx
+jlense.pdf
+tools/tunnel-client/
+Manifest.toml
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+
+# ─────────────────────────────────────────────────────────────
+#  Nested engine variants (separate old repos, not used at runtime)
+# ─────────────────────────────────────────────────────────────
+src/j-engine/
+src/jl-engine-local/
+
+# ─────────────────────────────────────────────────────────────
+#  Scratch / debug artifacts
+# ─────────────────────────────────────────────────────────────
+_*.json
+_*.txt
+_*.py
+_*.jl
+tmp_exec_*.py
+tmp_exec_*.jl
+tmp*.txt
+_mcp_inspect/
+mcp.zip
+a2a-inspector/
+a2a-tck/
+
+# ─────────────────────────────────────────────────────────────
+#  Local IDE / agent / tooling state
+# ─────────────────────────────────────────────────────────────
+.claude/
+.antigravitycli/
+.codex/
+.vs/
+.venv/
+venv/
+.CondaPkg/
+__pycache__/
+*.pyc
+*.pyo
+
+# ─────────────────────────────────────────────────────────────
+#  OS cruft
+# ─────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+pitreader_backup_copy/
+_*.ps1
+
+# ─────────────────────────────────────────────────────────────
+#  Bug-bounty / recon scratch — never for the public repo
+# ─────────────────────────────────────────────────────────────
+hunts/
+hunts.zip
+xai_openapi.json
+xai_response.txt
+data/xai_docs_screenshot.png
+data/evidence_gate_test.jl
+dotnet.zip
