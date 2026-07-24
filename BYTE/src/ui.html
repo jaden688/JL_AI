@@ -352,7 +352,13 @@ body{background:transparent;color:var(--green);font-family:'Consolas','Courier N
   <button id="focus-btn" onclick="toggleFocusMode()" title="Focus mode — chat only" style="background:rgba(0,200,255,0.1);border:1px solid rgba(0,200,255,0.3);color:#00c8ff;border-radius:3px;padding:1px 7px;font-family:inherit;font-size:10px;cursor:pointer;letter-spacing:1px;transition:0.15s;" onmouseover="this.style.background='rgba(0,200,255,0.22)'" onmouseout="this.style.background='rgba(0,200,255,0.1)'">◈ FOCUS</button>
   <button id="relaunch-btn" onclick="relaunchServer()" title="Relaunch server (reconnects automatically)" style="background:rgba(255,80,0,0.15);border:1px solid rgba(255,80,0,0.35);color:#ff6030;border-radius:3px;padding:1px 7px;font-family:inherit;font-size:10px;cursor:pointer;letter-spacing:1px;transition:0.15s;" onmouseover="this.style.background='rgba(255,80,0,0.28)'" onmouseout="this.style.background='rgba(255,80,0,0.15)'">↺ RELAUNCH</button>
   <button id="terminal-toggle-btn" onclick="toggleTerminalMaximize()" title="Toggle full center-panel terminal console" style="background:rgba(0,255,153,0.1);border:1px solid rgba(0,255,153,0.3);color:var(--green);border-radius:3px;padding:1px 7px;font-family:inherit;font-size:10px;cursor:pointer;letter-spacing:1px;transition:0.15s;" onmouseover="this.style.background='rgba(0,255,153,0.22)'" onmouseout="this.style.background='rgba(0,255,153,0.1)'">🖵 CONSOLE</button>
+  <button id="engine-map-btn" onclick="toggleEngineMap()" title="Live 3D Engine Map — watch the engine think" style="background:rgba(120,80,255,0.12);border:1px solid rgba(120,80,255,0.35);color:#a070ff;border-radius:3px;padding:1px 7px;font-family:inherit;font-size:10px;cursor:pointer;letter-spacing:1px;transition:0.15s;" onmouseover="this.style.background='rgba(120,80,255,0.25)'" onmouseout="this.style.background='rgba(120,80,255,0.12)'">🧠 MAP</button>
   <span style="color:var(--dim);font-size:10px;" id="clock"></span>
+</div>
+
+<!-- ENGINE MAP OVERLAY -->
+<div id="engine-map-panel" style="display:none;position:fixed;top:36px;left:0;right:0;bottom:0;z-index:500;background:#04060f;">
+  <iframe id="engine-map-frame" src="" style="width:100%;height:100%;border:none;" allow="autoplay"></iframe>
 </div>
 
 <!-- MAIN -->
@@ -1954,6 +1960,28 @@ function toggleFocusMode(on){
 })();
 
 /* ====== RELAUNCH ====== */
+/* ====== ENGINE MAP ====== */
+let engineMapOpen = false;
+function toggleEngineMap() {
+  engineMapOpen = !engineMapOpen;
+  const panel = document.getElementById('engine-map-panel');
+  const btn = document.getElementById('engine-map-btn');
+  const frame = document.getElementById('engine-map-frame');
+  if (engineMapOpen) {
+    panel.style.display = 'block';
+    btn.style.background = 'rgba(120,80,255,0.35)';
+    btn.style.borderColor = 'rgba(160,120,255,0.6)';
+    btn.textContent = '✕ MAP';
+    frame.src = 'engine_map.html';
+  } else {
+    panel.style.display = 'none';
+    btn.style.background = 'rgba(120,80,255,0.12)';
+    btn.style.borderColor = 'rgba(120,80,255,0.35)';
+    btn.textContent = '🧠 MAP';
+    frame.src = '';
+  }
+}
+
 function relaunchServer(){
   if(!confirm('Relaunch SparkByte server? The UI will reconnect automatically.')) return;
   termPrint('⟳ Sending relaunch signal…','warn');

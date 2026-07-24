@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JL Engine — Live Map</title>
+<script src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
+<script src="https://unpkg.com/d3-force-3d@3.0.5/dist/d3-force-3d.min.js"></script>
+<script src="https://unpkg.com/3d-force-graph@1.73.3/dist/3d-force-graph.min.js"></script>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{width:100%;height:100%;background:#04060f;overflow:hidden;font-family:'Segoe UI',Arial,sans-serif;}
+  #graph{width:100%;height:100%;}
+
+  /* ── HUD ── */
+  #hud{position:fixed;top:12px;left:12px;z-index:100;display:flex;flex-direction:column;gap:8px;pointer-events:none;}
+  #status-pill{background:rgba(4,6,15,0.82);border:1px solid rgba(0,255,153,0.22);border-radius:20px;padding:4px 14px;font-size:10px;letter-spacing:2px;color:#00ff99;backdrop-filter:blur(12px);}
+  #status-pill.disconnected{border-color:rgba(255,60,60,0.4);color:#ff5050;}
+  #status-pill.connecting{border-color:rgba(255,200,0,0.4);color:#ffcc00;}
+
+  /* ── METRICS BAR ── */
+  #metrics{position:fixed;bottom:0;left:0;right:0;z-index:100;background:rgba(4,6,15,0.88);border-top:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;gap:0;backdrop-filter:blur(16px);height:36px;overflow:hidden;}
+  .metric{display:flex;flex-direction:column;justify-content:center;padding:0 16px;border-right:1px solid rgba(255,255,255,0.05);min-width:100px;}
+  .metric-label{font-size:8px;letter-spacing:2px;color:#445566;text-transform:uppercase;}
+  .metric-val{font-size:11px;color:#7bf6ff;font-weight:600;margin-top:1px;}
+  .metric-val.active{color:#00ff99;}
+  .metric-val.hot{color:#ff8c00;}
+
+  /* ── INSPECTOR ── */
+  #inspector{position:fixed;top:12px;right:12px;z-index:100;width:260px;background:rgba(4,6,15,0.88);border:1px solid rgba(255,255,255,0.07);border-radius:14px;padding:16px;backdrop-filter:blur(16px);display:none;}
+  #inspector.visible{display:block;}
+  #insp-name{font-size:13px;font-weight:700;color:#ffffff;margin-bottom:4px;}
+  #insp-type{font-size:9px;letter-spacing:2px;color:#445566;text-transform:uppercase;margin-bottom:12px;}
+  #insp-body{font-size:11px;color:#8899aa;line-height:1.7;}
+  #insp-close{position:absolute;top:10px;right:12px;cursor:pointer;color:#445566;font-size:14px;line-height:1;}
+  #insp-close:hover{color:#ffffff;}
+  .insp-row{display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.03);}
+  .insp-row:last-child{border-bottom:none;}
+  .insp-key{color:#556677;}
+  .insp-val{color:#7bf6ff;font-weight:600;}
+
+  /* ── EXPAND BUTTON ── */
+  #expand-btn{display:none;margin-top:12px;width:100%;background:rgba(0,200,255,0.12);border:1px solid rgba(0,200,255,0.25);color:#00c8ff;border-radius:8px;padding:7px 0;font-size:10px;letter-spacing:2px;cursor:pointer;transition:0.2s;}
+  #expand-btn:hover{background:rgba(0,200,255,0.22);}
+
+  /* ── BACK BUTTON ── */
+  #back-btn{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:100;display:none;background:rgba(4,6,15,0.88);border:1px solid rgba(255,255,255,0.1);color:#7bf6ff;border-radius:20px;padding:5px 20px;font-size:10px;letter-spacing:2px;cursor:pointer;backdrop-filter:blur(12px);transition:0.2s;}
+  #back-btn:hover{background:rgba(0,200,255,0.12);}
+
+  /* ── LEGEND ── */
+  #legend{position:fixed;bottom:44px;right:12px;z-index:100;background:rgba(4,6,15,0.82);border:1px solid rgba(255,255,255,0.05);border-radius:10px;padding:10px 14px;backdrop-filter:blur(12px);}
+  .leg-row{display:flex;align-items:center;gap:8px;margin:3px 0;font-size:10px;color:#556677;}
+  .leg-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+
+  /* ── PULSE RING ── */
+  @keyframes pulse-ring{0%{opacity:0.8}50%{opacity:0.3}100%{opacity:0.8}}
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <div id="status-pill" class="connecting">◈ CONNECTING…</div>
+</div>
+
+<div id="back-btn" onclick="exitAgentView()">← ENGINE VIEW</div>
+
+<div id="inspector">
+  <span id="insp-close" onclick="closeInspector()">✕</span>
+  <div id="insp-name">—</div>
+  <div id="insp-type">—</div>
+  <div id="insp-body"></div>
+  <button id="expand-btn" onclick="expandAgent()">⊕ VIEW INTERNALS</button>
+</div>
+
+<div id="metrics">
+  <div class="metric"><div class="metric-label">OPERATOR</div><div class="metric-val" id="m-operator">—</div></div>
+  <div class="metric"><div class="metric-label">GEAR</div><div class="metric-val" id="m-gear">—</div></div>
+  <div class="metric"><div class="metric-label">BEHAVIOR</div><div class="metric-val" id="m-behavior">—</div></div>
+  <div class="metric"><div class="metric-label">DRIFT</div><div class="metric-val" id="m-drift">0.000</div></div>
+  <div class="metric"><div class="metric-label">RHYTHM</div><div class="metric-val" id="m-rhythm">—</div></div>
+  <div class="metric"><div class="metric-label">APERTURE</div><div class="metric-val" id="m-aperture">—</div></div>
+  <div class="metric"><div class="metric-label">URGENCY</div><div class="metric-val" id="m-urgency">0.00</div></div>
+  <div class="metric"><div class="metric-label">AROUSAL</div><div class="metric-val" id="m-arousal">0.00</div></div>
+  <div class="metric"><div class="metric-label">SENTIMENT</div><div class="metric-val" id="m-sentiment">0.00</div></div>
+</div>
+
+<div id="legend">
+  <div class="leg-row"><div class="leg-dot" style="background:#12b4ff"></div>SparkByte</div>
+  <div class="leg-row"><div class="leg-dot" style="background:#ff8c00"></div>Slappy</div>
+  <div class="leg-row"><div class="leg-dot" style="background:#ff4444"></div>The Gremlin</div>
+  <div class="leg-row"><div class="leg-dot" style="background:#9966ff"></div>Temporal</div>
+  <div class="leg-row"><div class="leg-dot" style="background:#1fd96e"></div>Supervisor</div>
+  <div class="leg-row"><div class="leg-dot" style="background:#ffd700"></div>Balthazar</div>
+  <div class="leg-row"><div class="leg-dot" style="background:#00ffaa;opacity:0.6"></div>Systems</div>
+</div>
+
+<div id="graph"></div>
+
+<script>
+// ── CONFIG ────────────────────────────────────────────────────────────────────
+const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const WS_URL = `${wsProto}//${location.hostname || '127.0.0.1'}:8081`;
+const RECONNECT_DELAY = 3000;
+
+// ── AGENT PALETTE ─────────────────────────────────────────────────────────────
+const AGENT_META = {
+  'SparkByte':   { color: '#12b4ff', emoji: '⚡', desc: 'Sassy fast-talking junior engineer' },
+  'Slappy':      { color: '#ff8c00', emoji: '🤠', desc: 'Chaotic gremlin — chaos oracle' },
+  'The Gremlin': { color: '#ff4444', emoji: '😈', desc: 'Pure chaos builder — destruction → creation' },
+  'Temporal':    { color: '#9966ff', emoji: '🌀', desc: 'Analytical temporal/quantum reasoning' },
+  'Supervisor':  { color: '#1fd96e', emoji: '🛡', desc: 'Grounding safe-mode helper' },
+  'Balthazar':   { color: '#ffd700', emoji: '🔥', desc: 'Savage diagnostic root-cause agent' },
+};
+
+const SYSTEM_NODES = [
+  { id: 'sys_signal',   name: 'Signal Scorer',    color: '#ff44ff', group: 'system', desc: 'Scores urgency · arousal · sentiment · pace · confusion · memory density' },
+  { id: 'sys_behavior', name: 'Behavior Grid',    color: '#4499ff', group: 'system', desc: '5×4 behavioral state machine — 20 named states across intensity × control' },
+  { id: 'sys_drift',    name: 'Drift Engine',     color: '#ffcc00', group: 'system', desc: 'Calculates semantic and agent drift pressure 0.0→1.0' },
+  { id: 'sys_rhythm',   name: 'Rhythm Engine',    color: '#00ffcc', group: 'system', desc: 'Response pacing — flip · flop · trot' },
+  { id: 'sys_aperture', name: 'Aperture',         color: '#bb88ff', group: 'system', desc: 'Emotional aperture — OPEN · FOCUSED · TIGHT — shapes temp + top_p' },
+  { id: 'sys_memory',   name: 'Memory',           color: '#aaddff', group: 'system', desc: 'SQLite long-term memory — remember / recall' },
+  { id: 'sys_backend',  name: 'LLM Backend',      color: '#667788', group: 'system', desc: 'Gemini · xAI · OpenAI · Anthropic · Cerebras · Ollama' },
+];
+
+// ── STATE ─────────────────────────────────────────────────────────────────────
+let ws = null;
+let currentAgent = null;
+let currentSnapshot = {};
+let agentInternalView = null; // null = engine view, string = agent name
+let selectedNode = null;
+let activityLevels = {}; // node id → 0.0-1.0
+let nodeObjects = {}; // id → THREE mesh for direct manipulation
+
+// ── GRAPH SETUP ───────────────────────────────────────────────────────────────
+const Graph = ForceGraph3D()(document.getElementById('graph'))
+  .backgroundColor('#04060f')
+  .nodeLabel(n => `${n.name}`)
+  .nodeColor(n => getNodeColor(n))
+  .nodeVal(n => getNodeSize(n))
+  .linkColor(l => getLinkColor(l))
+  .linkWidth(l => getLinkWidth(l))
+  .linkOpacity(0.5)
+  .linkDirectionalParticles(l => l.active ? 4 : 0)
+  .linkDirectionalParticleWidth(l => l.active ? 2.5 : 0)
+  .linkDirectionalParticleColor(l => l.particleColor || '#00ff99')
+  .linkDirectionalParticleSpeed(0.008)
+  .onNodeClick(handleNodeClick)
+  .onBackgroundClick(() => { closeInspector(); })
+  .nodeThreeObject(n => buildNodeMesh(n))
+  .nodeThreeObjectExtend(false)
+  .d3AlphaDecay(0.015)
+  .d3VelocityDecay(0.1)
+  .d3Force('charge', null);
+
+// Add charge force
+Graph.d3Force('charge', d3.forceManyBody().strength(-300));
+
+// Auto-rotate
+const controls = Graph.controls();
+if (controls) {
+  controls.autoRotate = true;
+  controls.autoRotateSpeed = 0.4;
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+}
+
+// ── COSMIC STARFIELD ─────────────────────────────────────────────────────────
+function addStarfield() {
+  const scene = Graph.scene();
+  const geo = new THREE.BufferGeometry();
+  const count = 2500;
+  const pos = new Float32Array(count * 3);
+  for (let i = 0; i < count * 3; i++) pos[i] = (Math.random() - 0.5) * 2000;
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const mat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.7, transparent: true, opacity: 0.55 });
+  scene.add(new THREE.Points(geo, mat));
+}
+addStarfield();
+
+// ── LIGHTING ─────────────────────────────────────────────────────────────────
+function addLighting() {
+  const scene = Graph.scene();
+  scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+  const hemi = new THREE.HemisphereLight(0x8ab8ff, 0x11151c, 0.6);
+  scene.add(hemi);
+  const key = new THREE.PointLight(0xffffff, 1.2);
+  key.position.set(200, 200, 150);
+  scene.add(key);
+  const fill = new THREE.PointLight(0x9bdfff, 0.6);
+  fill.position.set(-170, 120, 150);
+  scene.add(fill);
+}
+addLighting();
+
+// ── NODE MESH ─────────────────────────────────────────────────────────────────
+function buildNodeMesh(node) {
+  const color = getNodeColorHex(node);
+  const radius = Math.sqrt(getNodeSize(node)) * 1.2;
+  const activity = activityLevels[node.id] || 0;
+
+  const geo = new THREE.SphereGeometry(radius, 16, 16);
+  const mat = new THREE.MeshPhongMaterial({
+    color: color,
+    emissive: color,
+    emissiveIntensity: 0.15 + activity * 0.6,
+    shininess: 80,
+    transparent: true,
+    opacity: node.dimmed ? 0.25 : 0.92,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+
+  // Glow sprite
+  if (!node.dimmed) {
+    const glowSprite = makeGlowSprite(color, radius, 0.45 + activity * 0.3);
+    mesh.add(glowSprite);
+  }
+
+  nodeObjects[node.id] = mesh;
+  return mesh;
+}
+
+function makeGlowSprite(hexColor, radius, intensity) {
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const c = new THREE.Color(hexColor);
+  const r = Math.round(c.r * 255), g = Math.round(c.g * 255), b = Math.round(c.b * 255);
+  const grad = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
+  grad.addColorStop(0,    `rgba(${r},${g},${b},0.9)`);
+  grad.addColorStop(0.35, `rgba(${r},${g},${b},0.4)`);
+  grad.addColorStop(0.85, `rgba(${r},${g},${b},0.08)`);
+  grad.addColorStop(1,    `rgba(${r},${g},${b},0)`);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: intensity, depthWrite: false, blending: THREE.AdditiveBlending });
+  const sprite = new THREE.Sprite(mat);
+  const scale = radius * 3.2;
+  sprite.scale.set(scale, scale, scale);
+  return sprite;
+}
+
+// ── NODE COLOR ────────────────────────────────────────────────────────────────
+function getNodeColorHex(n) {
+  if (n.group === 'agent') {
+    const meta = AGENT_META[n.agentName || n.name];
+    return meta ? meta.color : '#7799aa';
+  }
+  if (n.group === 'system') return n.color || '#00ffaa';
+  if (n.group === 'emotion') return n.color || '#ff88cc';
+  if (n.group === 'gear') return '#7b63ff';
+  if (n.group === 'tool') return '#1fd96e';
+  if (n.group === 'behavior') return '#4499ff';
+  return '#445566';
+}
+
+function getNodeColor(n) {
+  const active = activityLevels[n.id] > 0.5;
+  const isCurrentAgent = n.agentName === currentAgent || n.name === currentAgent;
+  if (isCurrentAgent && n.group === 'agent') return '#ffffff';
+  return getNodeColorHex(n);
+}
+
+function getNodeSize(n) {
+  const base = n.baseSize || 10;
+  const activity = activityLevels[n.id] || 0;
+  const isCurrentAgent = n.agentName === currentAgent || n.name === currentAgent;
+  if (isCurrentAgent && n.group === 'agent') return base * 2.2 + activity * 20;
+  return base + activity * 15;
+}
+
+function getLinkColor(l) {
+  if (l.active) return l.particleColor || '#00ff99';
+  if (l.kind === 'pipeline') return 'rgba(0,200,255,0.3)';
+  if (l.kind === 'agent_system') return 'rgba(100,150,200,0.15)';
+  return 'rgba(80,100,120,0.12)';
+}
+
+function getLinkWidth(l) {
+  if (l.active) return 2;
+  return 0.5;
+}
+
+// ── BUILD ENGINE GRAPH ────────────────────────────────────────────────────────
+function buildEngineGraph() {
+  agentInternalView = null;
+  document.getElementById('back-btn').style.display = 'none';
+  nodeObjects = {};
+
+  const nodes = [];
+  const links = [];
+
+  // Agent nodes
+  Object.entries(AGENT_META).forEach(([name, meta]) => {
+    nodes.push({
+      id: `agent_${name}`,
+      name: name,
+      agentName: name,
+      group: 'agent',
+      baseSize: 18,
+      color: meta.color,
+      emoji: meta.emoji,
+      desc: meta.desc,
+    });
+  });
+
+  // System nodes
+  SYSTEM_NODES.forEach(s => nodes.push({ ...s, baseSize: 8 }));
+
+  // Pipeline links (signal → behavior → drift → rhythm → aperture → backend)
+  const pipeline = ['sys_signal','sys_behavior','sys_drift','sys_rhythm','sys_aperture','sys_backend'];
+  for (let i = 0; i < pipeline.length - 1; i++) {
+    links.push({ source: pipeline[i], target: pipeline[i+1], kind: 'pipeline', id: `pipe_${i}` });
+  }
+
+  // Each agent connects to key systems
+  Object.keys(AGENT_META).forEach(name => {
+    ['sys_signal','sys_memory','sys_backend'].forEach(sysId => {
+      links.push({ source: `agent_${name}`, target: sysId, kind: 'agent_system', id: `${name}_${sysId}` });
+    });
+  });
+
+  Graph.graphData({ nodes, links });
+  setTimeout(() => Graph.zoomToFit(1000, 80), 1200);
+}
+
+// ── BUILD AGENT INTERNAL GRAPH ────────────────────────────────────────────────
+function buildAgentGraph(agentName) {
+  agentInternalView = agentName;
+  document.getElementById('back-btn').style.display = 'block';
+  nodeObjects = {};
+
+  const nodes = [];
+  const links = [];
+  const meta = AGENT_META[agentName] || { color: '#7799aa' };
+
+  // Central agent hub
+  nodes.push({ id: 'hub', name: agentName, group: 'agent', agentName, baseSize: 28, color: meta.color });
+
+  // Emotion facets from snapshot
+  const emotions = currentSnapshot.emotion_weights || getDefaultEmotions(agentName);
+  emotions.forEach((e, i) => {
+    const nid = `emotion_${i}`;
+    nodes.push({ id: nid, name: e.label, group: 'emotion', baseSize: 3 + e.weight * 14, color: emotionColor(e.label), weight: e.weight, desc: `weight: ${e.weight.toFixed(3)}` });
+    links.push({ source: 'hub', target: nid, kind: 'agent_system', id: `hub_${nid}` });
+  });
+
+  // Behavior state
+  const bstate = currentSnapshot.behavior_state?.name || 'unknown';
+  nodes.push({ id: 'bstate', name: bstate, group: 'behavior', baseSize: 10, desc: 'Current behavior state' });
+  links.push({ source: 'hub', target: 'bstate', kind: 'pipeline', id: 'hub_bstate', active: true, particleColor: '#4499ff' });
+
+  // Gears
+  const gears = ['LITE_REASONING','EXPRESSIVE_SYNTH','TASK_FLOW','DEEP_THINK','CHAT'];
+  const activeGear = currentSnapshot.gait || 'LITE_REASONING';
+  gears.forEach(g => {
+    nodes.push({ id: `gear_${g}`, name: g, group: 'gear', baseSize: g === activeGear ? 12 : 6, desc: gearDesc(g) });
+    links.push({ source: 'hub', target: `gear_${g}`, kind: 'agent_system', id: `hub_gear_${g}`, active: g === activeGear, particleColor: '#7b63ff' });
+  });
+
+  // Signals
+  const signals = currentSnapshot.signals || {};
+  const signalDefs = [
+    { key: 'urgency', label: 'Urgency', color: '#ff4444' },
+    { key: 'arousal', label: 'Arousal', color: '#ff8844' },
+    { key: 'sentiment', label: 'Sentiment', color: '#44ff88' },
+    { key: 'confusion', label: 'Confusion', color: '#ffcc00' },
+    { key: 'pace', label: 'Pace', color: '#44aaff' },
+    { key: 'memory_density', label: 'Memory', color: '#aaddff' },
+  ];
+  signalDefs.forEach(s => {
+    const val = signals[s.key] || 0;
+    nodes.push({ id: `sig_${s.key}`, name: s.label, group: 'system', baseSize: 3 + val * 10, color: s.color, desc: `${s.label}: ${val.toFixed(3)}` });
+    links.push({ source: 'hub', target: `sig_${s.key}`, kind: 'agent_system', id: `hub_sig_${s.key}` });
+  });
+
+  // Drift + Aperture
+  const drift = currentSnapshot.drift?.pressure || 0;
+  nodes.push({ id: 'drift', name: `Drift ${drift.toFixed(3)}`, group: 'system', baseSize: 3 + drift * 14, color: '#ffcc00', desc: `Drift pressure: ${drift.toFixed(3)}` });
+  links.push({ source: 'hub', target: 'drift', kind: 'pipeline', id: 'hub_drift' });
+
+  const aperture = currentSnapshot.aperture_state?.mode || 'FOCUSED';
+  nodes.push({ id: 'aperture', name: `Aperture: ${aperture}`, group: 'system', baseSize: 10, color: '#bb88ff', desc: 'Emotional aperture — shapes temp + top_p' });
+  links.push({ source: 'hub', target: 'aperture', kind: 'pipeline', id: 'hub_aperture' });
+
+  Graph.graphData({ nodes, links });
+  setTimeout(() => Graph.zoomToFit(900, 60), 1000);
+}
+
+function getDefaultEmotions(agentName) {
+  const DEFAULTS = {
+    'Slappy': [
+      { label: 'feral glee', weight: 0.85 }, { label: 'rowdy defiance', weight: 0.80 },
+      { label: 'stubborn grit', weight: 0.65 }, { label: 'barnyard wisdom', weight: 0.55 },
+      { label: 'heartfelt holler', weight: 0.52 }, { label: 'bewildered cackle', weight: 0.60 },
+    ],
+    'SparkByte': [
+      { label: 'creative spark', weight: 0.88 }, { label: 'tech confidence', weight: 0.82 },
+      { label: 'playful sass', weight: 0.75 }, { label: 'focused drive', weight: 0.70 },
+    ],
+  };
+  return DEFAULTS[agentName] || [
+    { label: 'focus', weight: 0.7 }, { label: 'drive', weight: 0.6 },
+    { label: 'stability', weight: 0.65 }, { label: 'clarity', weight: 0.55 },
+  ];
+}
+
+function emotionColor(label) {
+  const map = {
+    'feral': '#ff6600', 'rowdy': '#ff4400', 'stubborn': '#ffaa00', 'barnyard': '#88cc44',
+    'heartfelt': '#ff6688', 'bewildered': '#ffdd00', 'creative': '#00ddff', 'tech': '#4499ff',
+    'playful': '#ff88cc', 'focused': '#44ffaa', 'sass': '#ff44aa', 'drive': '#ffcc00',
+  };
+  for (const [key, color] of Object.entries(map)) {
+    if (label.toLowerCase().includes(key)) return color;
+  }
+  return '#aa88cc';
+}
+
+function gearDesc(g) {
+  const d = { 'LITE_REASONING': 'Fast + light', 'EXPRESSIVE_SYNTH': 'Creative long-form', 'TASK_FLOW': 'Tool-heavy structured', 'DEEP_THINK': 'Max reasoning', 'CHAT': 'Conversational no-tools' };
+  return d[g] || g;
+}
+
+// ── NODE INTERACTION ──────────────────────────────────────────────────────────
+function handleNodeClick(node) {
+  selectedNode = node;
+  showInspector(node);
+
+  // Zoom to node
+  const dist = node.group === 'agent' ? 100 : 60;
+  const { x=0, y=0, z=0 } = node;
+  const ratio = 1 + dist / Math.hypot(x, y, z || 1);
+  Graph.cameraPosition({ x: x*ratio, y: y*ratio, z: z*ratio }, node, 1400);
+}
+
+function showInspector(node) {
+  const insp = document.getElementById('inspector');
+  const name = document.getElementById('insp-name');
+  const type = document.getElementById('insp-type');
+  const body = document.getElementById('insp-body');
+  const expandBtn = document.getElementById('expand-btn');
+
+  name.textContent = (node.emoji ? node.emoji + ' ' : '') + node.name;
+  type.textContent = node.group?.toUpperCase() || 'NODE';
+
+  const rows = [];
+  if (node.desc) rows.push({ k: 'Description', v: node.desc });
+  if (node.weight !== undefined) rows.push({ k: 'Weight', v: node.weight.toFixed(3) });
+  if (node.group === 'agent') {
+    const isActive = node.agentName === currentAgent;
+    rows.push({ k: 'Status', v: isActive ? '🟢 ACTIVE' : '⚪ STANDBY' });
+    rows.push({ k: 'Activity', v: ((activityLevels[node.id] || 0) * 100).toFixed(0) + '%' });
+  }
+
+  body.innerHTML = rows.map(r => `<div class="insp-row"><span class="insp-key">${r.k}</span><span class="insp-val">${r.v}</span></div>`).join('');
+
+  // Show expand button only for agents in engine view
+  if (node.group === 'agent' && !agentInternalView) {
+    expandBtn.style.display = 'block';
+    expandBtn.dataset.agent = node.agentName || node.name;
+  } else {
+    expandBtn.style.display = 'none';
+  }
+
+  insp.classList.add('visible');
+}
+
+function closeInspector() {
+  document.getElementById('inspector').classList.remove('visible');
+  selectedNode = null;
+}
+
+function expandAgent() {
+  const agentName = document.getElementById('expand-btn').dataset.agent;
+  if (!agentName) return;
+  closeInspector();
+  buildAgentGraph(agentName);
+}
+
+function exitAgentView() {
+  buildEngineGraph();
+}
+
+// ── ACTIVITY PULSES ───────────────────────────────────────────────────────────
+function pulseNode(id, intensity = 1.0, duration = 800) {
+  activityLevels[id] = intensity;
+  refreshNode(id);
+  setTimeout(() => {
+    activityLevels[id] = Math.max(0, (activityLevels[id] || 0) - intensity);
+    refreshNode(id);
+  }, duration);
+}
+
+function refreshNode(id) {
+  const mesh = nodeObjects[id];
+  if (!mesh) return;
+  const data = Graph.graphData();
+  const node = data.nodes.find(n => n.id === id);
+  if (!node) return;
+  const activity = activityLevels[id] || 0;
+  if (mesh.material) {
+    mesh.material.emissiveIntensity = 0.15 + activity * 0.6;
+  }
+  const baseSize = node.baseSize || 10;
+  const isCurrentAgent = node.agentName === currentAgent || node.name === currentAgent;
+  const targetSize = isCurrentAgent && node.group === 'agent' ? baseSize * 2.2 + activity * 20 : baseSize + activity * 15;
+  const baseRadius = Math.sqrt(baseSize) * 1.2;
+  const targetRadius = Math.sqrt(targetSize) * 1.2;
+  const scaleFactor = baseRadius > 0 ? targetRadius / baseRadius : 1;
+  mesh.scale.set(scaleFactor, scaleFactor, scaleFactor);
+  const glow = mesh.children[0];
+  if (glow && glow.material) {
+    glow.material.opacity = 0.45 + activity * 0.3;
+  }
+}
+
+function pulseActivePipeline() {
+  const pipeline = ['sys_signal','sys_behavior','sys_drift','sys_rhythm','sys_aperture','sys_backend'];
+  pipeline.forEach((id, i) => {
+    setTimeout(() => pulseNode(id, 0.9, 600), i * 120);
+  });
+  // Also pulse active link
+  const data = Graph.graphData();
+  data.links.forEach(l => {
+    if (l.kind === 'pipeline') l.active = true;
+  });
+  setTimeout(() => {
+    data.links.forEach(l => { if (l.kind === 'pipeline') l.active = false; });
+    Graph.graphData(data);
+  }, pipeline.length * 120 + 600);
+  Graph.graphData(data);
+}
+
+// ── METRICS UPDATE ────────────────────────────────────────────────────────────
+function updateMetrics(snapshot) {
+  const s = snapshot.signals || {};
+  const set = (id, val, hot) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = val;
+    el.className = 'metric-val' + (hot ? ' hot' : '');
+  };
+  set('m-operator', currentAgent || '—', !!currentAgent);
+  set('m-gear', snapshot.gait || '—', false);
+  set('m-behavior', snapshot.behavior_state?.name || '—', false);
+  set('m-drift', (snapshot.drift?.pressure ?? 0).toFixed(3), (snapshot.drift?.pressure || 0) > 0.6);
+  set('m-rhythm', snapshot.rhythm?.mode || '—', false);
+  set('m-aperture', snapshot.aperture_state?.mode || '—', false);
+  set('m-urgency', (s.urgency ?? 0).toFixed(2), (s.urgency || 0) > 0.7);
+  set('m-arousal', (s.arousal ?? 0).toFixed(2), (s.arousal || 0) > 0.7);
+  set('m-sentiment', (s.sentiment ?? 0).toFixed(2), false);
+}
+
+// ── WEBSOCKET ─────────────────────────────────────────────────────────────────
+function setStatus(state) {
+  const pill = document.getElementById('status-pill');
+  pill.className = `connecting`;
+  if (state === 'connected') { pill.className = 'active'; pill.textContent = '◈ LIVE'; }
+  else if (state === 'disconnected') { pill.className = 'disconnected'; pill.textContent = '◉ OFFLINE'; }
+  else { pill.textContent = '◈ CONNECTING…'; }
+}
+
+function connect() {
+  setStatus('connecting');
+  ws = new WebSocket(WS_URL);
+
+  ws.onopen = () => {
+    setStatus('connected');
+  };
+
+  ws.onclose = () => {
+    setStatus('disconnected');
+    ws = null;
+    setTimeout(connect, RECONNECT_DELAY);
+  };
+
+  ws.onerror = () => {};
+
+  ws.onmessage = (event) => {
+    let msg;
+    try { msg = JSON.parse(event.data); } catch { return; }
+
+    switch (msg.type) {
+
+      case 'ui_update': {
+        // gear change, operator change, mode change
+        if (msg.gear) {
+          currentSnapshot.gait = msg.gear;
+          updateMetrics(currentSnapshot);
+        }
+        if (msg.agent || msg.operator) {
+          const newAgent = msg.agent || msg.operator;
+          if (newAgent !== currentAgent) {
+            currentAgent = newAgent;
+            // Pulse the newly active agent
+            pulseNode(`agent_${currentAgent}`, 1.0, 1200);
+          }
+          updateMetrics(currentSnapshot);
+        }
+        break;
+      }
+
+      case 'cognitive': {
+        switch (msg.event) {
+
+          case 'state': {
+            // Full engine snapshot
+            const snap = msg.snapshot || msg.data || {};
+            currentSnapshot = { ...currentSnapshot, ...snap };
+            updateMetrics(currentSnapshot);
+            // If viewing agent internals, rebuild with fresh data
+            if (agentInternalView) buildAgentGraph(agentInternalView);
+            break;
+          }
+
+          case 'thought': {
+            // Agent is thinking — pulse it
+            if (currentAgent) pulseNode(`agent_${currentAgent}`, 0.8, 700);
+            pulseActivePipeline();
+            break;
+          }
+
+          case 'tool': {
+            // Tool call — pulse signal + backend
+            pulseNode('sys_signal', 0.7, 500);
+            pulseNode('sys_backend', 0.9, 600);
+            if (currentAgent) pulseNode(`agent_${currentAgent}`, 0.6, 500);
+            break;
+          }
+
+          case 'api': {
+            pulseNode('sys_backend', 1.0, 800);
+            if (currentAgent) pulseNode(`agent_${currentAgent}`, 0.7, 600);
+            break;
+          }
+
+          case 'turn_complete':
+          case 'turn_recorded': {
+            const snap2 = msg.snapshot || {};
+            if (snap2.gait) { currentSnapshot.gait = snap2.gait; }
+            updateMetrics(currentSnapshot);
+            break;
+          }
+        }
+        break;
+      }
+
+      case 'thinking': {
+        if (currentAgent) pulseNode(`agent_${currentAgent}`, 0.9, 900);
+        pulseNode('sys_backend', 0.6, 600);
+        break;
+      }
+
+      case 'tool_start': {
+        pulseNode('sys_signal', 0.8, 500);
+        if (currentAgent) pulseNode(`agent_${currentAgent}`, 0.5, 400);
+        break;
+      }
+
+      case 'tool_done': {
+        pulseNode('sys_backend', 0.7, 500);
+        break;
+      }
+
+      case 'spark': {
+        // Response token — gentle pulse on active agent
+        if (currentAgent && Math.random() < 0.3) {
+          pulseNode(`agent_${currentAgent}`, 0.4, 300);
+        }
+        break;
+      }
+
+      case 'forge_start':
+      case 'forge_line':
+      case 'forge_done': {
+        pulseNode('sys_backend', 0.9, 600);
+        if (currentAgent) pulseNode(`agent_${currentAgent}`, 0.8, 500);
+        break;
+      }
+    }
+  };
+}
+
+// ── INIT ──────────────────────────────────────────────────────────────────────
+buildEngineGraph();
+connect();
+
+// Resize handler
+window.addEventListener('resize', () => {
+  Graph.width(window.innerWidth).height(window.innerHeight - 36);
+});
+Graph.height(window.innerHeight - 36);
+</script>
+</body>
+</html>

@@ -1,3 +1,8 @@
+# Pin PythonCall to the system python and keep CondaPkg (PythonCall's internal
+# env manager) fully dormant — no conda envs, no downloads, no provisioning at
+# boot, ever. Python is an optional runtime extra: if it's on PATH, browser
+# features light up; if not, they degrade gracefully. Unset these yourself only
+# if you explicitly want CondaPkg to manage a private Python env.
 haskey(ENV, "JULIA_CONDAPKG_BACKEND") || (ENV["JULIA_CONDAPKG_BACKEND"] = "Null")
 haskey(ENV, "JULIA_PYTHONCALL_EXE") || (ENV["JULIA_PYTHONCALL_EXE"] = "python")
 

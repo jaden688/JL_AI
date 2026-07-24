@@ -1,0 +1,22 @@
+{
+  "_comment": "Copy this to connectors.json (same dir as the running engine, or set SPARKBYTE_STATE_DIR) and flip a connector's \"enabled\" to true. Each entry launches an external MCP server over stdio; its tools appear to the agent as mcp__<name>__<tool>. Everything is opt-in — with all connectors disabled (or no connectors.json at all) the engine behaves exactly as before. Secrets: never paste them here — store them once with the `vault` tool (or by editing secrets.vault.json), then reference them as \"vault:NAME\" in an env block, as the github entry shows.",
+
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "vault:github_token" },
+      "enabled": false
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+      "enabled": false
+    },
+    "postgres": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres"],
+      "enabled": false
+    }
+  }
+}

@@ -1,0 +1,98 @@
+name: Build Installers
+
+# Builds the standalone JL Engine app natively on each OS. PackageCompiler can
+# only build for the platform it runs on, so we fan out across GitHub runners:
+#   ubuntu-latest → Linux x64,  windows-latest → Windows x64,
+#   macos-13      → macOS Intel, macos-14      → macOS Apple Silicon.
+#
+# Push a tag like `v0.1.0` to cut a Release with all four artifacts attached,
+# or hit "Run workflow" (workflow_dispatch) to build without publishing.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # required to create/attach GitHub Releases
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux-x64
+          - os: windows-latest
+            label: windows-x64
+          - os: macos-13
+            label: macos-x64
+          - os: macos-14
+            label: macos-arm64
+    env:
+      # PythonCall must not try to provision a Conda env during the build.
+      # Bind it to the runner's system Python instead (installed below).
+      JULIA_CONDAPKG_BACKEND: "Null"
+      JULIA_PYTHONCALL_EXE: "python"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Julia 1.10
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.10"
+
+      - name: Cache Julia depot
+        uses: julia-actions/cache@v2
+
+      # Guarantees a `python` on PATH on every runner so PythonCall's lazy
+      # libpython lookup resolves consistently (JULIA_PYTHONCALL_EXE=python).
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build standalone app (10–30 min)
+        run: julia scripts/build_exe.jl
+
+      - name: Package (Unix → tar.gz)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          cd build
+          DIR=$(ls -d sparkbyte-*/ | head -1)
+          DIR=${DIR%/}
+          tar czf "jlengine-${{ matrix.label }}.tar.gz" "$DIR"
+          ls -lh "jlengine-${{ matrix.label }}.tar.gz"
+
+      - name: Package (Windows → zip)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cd build
+          $dir = (Get-ChildItem -Directory -Filter 'sparkbyte-*' | Select-Object -First 1).Name
+          Compress-Archive -Path "$dir\*" -DestinationPath "jlengine-${{ matrix.label }}.zip" -Force
+          Get-Item "jlengine-${{ matrix.label }}.zip"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jlengine-${{ matrix.label }}
+          path: |
+            build/jlengine-${{ matrix.label }}.tar.gz
+            build/jlengine-${{ matrix.label }}.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Attach to Release (tag pushes only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/jlengine-${{ matrix.label }}.tar.gz
+            build/jlengine-${{ matrix.label }}.zip
+          draft: true
+          fail_on_unmatched_files: false
