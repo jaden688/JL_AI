@@ -118,7 +118,18 @@ function generate(backend::OpenRouterBackend, messages; options=Dict{String, Any
     try
         response = HTTP.post(endpoint, headers, JSON3.write(payload); readtimeout=(timeout === nothing ? get(backend.config, "timeout", 120) : timeout))
         data = _materialize_json(JSON3.read(String(response.body)))
-        
+
+        # 🎫 Feed token usage into BYTE's session counter (guarded — BYTE owns the
+        # counter, broadcast, and /tokens endpoint; this path just contributes).
+        # BYTE is nested under JLEngine (App.jl includes it), so it's Main.JLEngine.BYTE.
+        if haskey(data, "usage")
+            _byte = isdefined(Main, :JLEngine) && isdefined(Main.JLEngine, :BYTE) ? Main.JLEngine.BYTE :
+                    (isdefined(Main, :BYTE) ? Main.BYTE : nothing)
+            if _byte !== nothing && isdefined(_byte, :_record_token_usage)
+                try _byte._record_token_usage(data["usage"], 0) catch; end
+            end
+        end
+
         if haskey(data, "error")
             err_msg = data["error"] isa AbstractDict ? get(data["error"], "message", string(data["error"])) : string(data["error"])
             return "[ERROR: OpenRouter returned an error. Details: $(err_msg)]", Dict{String, Any}("error" => err_msg)

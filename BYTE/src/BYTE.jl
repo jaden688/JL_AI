@@ -109,6 +109,62 @@ const _pending_confirms = Dict{String,Dict{String,Any}}()  # id => {fn, args}
 const _WS_CLIENTS      = Dict{UInt64, Any}()   # objectid(ws) => ws
 const _WS_CLIENTS_LOCK = ReentrantLock()
 
+# ── Token usage counter — accumulates LLM token spend across the session ───────
+# OpenRouter / OpenAI-compatible responses return a `usage` block on the final
+# (non-streamed) completion; we sum it per session and broadcast to the UI.
+const _TOKENS      = Dict{String,Int}("prompt"=>0, "completion"=>0, "total"=>0, "calls"=>0)
+const _TOKENS_LOCK = ReentrantLock()
+
+"Return a thread-safe copy of the running token totals."
+function _tokens_snapshot()
+    lock(_TOKENS_LOCK) do
+        copy(_TOKENS)
+    end
+end
+
+"""
+Fold one completion's `usage` block into the session counter, broadcast a
+`tokens` message to connected UIs, and log a telemetry event. Accepts the raw
+`usage` value (Dict or nothing) straight off the parsed API response.
+"""
+function _record_token_usage(usage, loop_iter)
+    (usage isa AbstractDict) || return
+    _asint(x) = x isa Number ? round(Int, x) : (try parse(Int, string(x)) catch; 0 end)
+    pt = _asint(get(usage, "prompt_tokens", 0))
+    ct = _asint(get(usage, "completion_tokens", 0))
+    tt = _asint(get(usage, "total_tokens", pt + ct))
+    (pt == 0 && ct == 0 && tt == 0) && return   # nothing reported; skip
+    snap = lock(_TOKENS_LOCK) do
+        _TOKENS["prompt"]     += pt
+        _TOKENS["completion"] += ct
+        _TOKENS["total"]      += tt
+        _TOKENS["calls"]      += 1
+        copy(_TOKENS)
+    end
+    _broadcast(Dict(
+        "type"               => "tokens",
+        "model"              => _current_model,
+        "last_prompt"        => pt,
+        "last_completion"    => ct,
+        "last_total"         => tt,
+        "session_prompt"     => snap["prompt"],
+        "session_completion" => snap["completion"],
+        "session_total"      => snap["total"],
+        "calls"              => snap["calls"],
+    ))
+    try
+        log_event("token_usage", Dict{String,Any}(
+            "loop_iter"        => Int(loop_iter),
+            "model"            => _current_model,
+            "prompt_tokens"    => pt,
+            "completion_tokens"=> ct,
+            "total_tokens"     => tt,
+            "session_total"    => snap["total"],
+        ))
+    catch; end
+    return snap
+end
+
 function _broadcast(msg::Dict)
     json_str = JSON.json(msg)
     lock(_WS_CLIENTS_LOCK) do
@@ -1184,6 +1240,9 @@ ADVISORY: $(get(snapshot["advisory"], "msg", "None"))
         resp = HTTP.post(api_url, headers, JSON.json(payload); readtimeout=api_timeout_s)
         data = JSON.parse(String(resp.body))
 
+        # 🎫 Token accounting — fold this call's usage into the session counter
+        _record_token_usage(get(data, "usage", nothing), loop_iter)
+
         if !haskey(data,"choices") || isempty(data["choices"])
             err_msg = "ERROR: No response from $provider. $(get(data,"error",Dict{String,Any}()))"
             _ws_send(ws, JSON.json(Dict("type"=>"spark","text"=>err_msg)))
@@ -1466,6 +1525,23 @@ function serve(engine; host::String="127.0.0.1", port::Int=8081)
                     "agent" => string(engine.current_agent_name),
                     "session_id" => _session_id,
                     "time" => string(now()),
+                    "tokens" => _tokens_snapshot(),
+                )))
+            elseif req.target == "/tokens" || startswith(req.target, "/tokens?")
+                log_event("http_serve", Dict{String,Any}("path"=>req.target, "status"=>200))
+                HTTP.setstatus(stream, 200)
+                HTTP.setheader(stream, "Content-Type"=>"application/json; charset=utf-8")
+                HTTP.startwrite(stream)
+                snap = _tokens_snapshot()
+                write(stream, JSON.json(Dict(
+                    "service"           => "sparkbyte",
+                    "session_id"        => _session_id,
+                    "model"             => _current_model,
+                    "prompt_tokens"     => snap["prompt"],
+                    "completion_tokens" => snap["completion"],
+                    "total_tokens"      => snap["total"],
+                    "api_calls"         => snap["calls"],
+                    "time"              => string(now()),
                 )))
             elseif req.target == "/"
                 log_event("http_serve", Dict{String,Any}("path"=>"/", "status"=>200))
