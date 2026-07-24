@@ -250,3 +250,11 @@ Each agent has: emotion_palette, drive_type, boot_prompt, personality, tone, etc
 - **Security**: Default bind is 127.0.0.1. Remote bind requires explicit env vars (see `mcp_server/server.py` docstring for details)
 - **WS connection**: Connects to engine at `SPARKBYTE_WS` (default `ws://127.0.0.1:8081`) with connection pool (`MCP_WS_CONCURRENCY`, default 4)
 - **Output cap**: `MCP_MAX_RESPONSE_BYTES` (default 60kB)
+## Repo layout & filing rules
+
+The root is for core engine code and configs ONLY. Before creating any file, check
+`operators/README.md` for the full repo map. Quick rules: engine code -> `src/` or
+`BYTE/src/`; one-off test scripts -> `test/manual/`; helper scripts -> `scripts/`;
+docs/notes -> `operators/notes/`; agent identity docs -> `operators/agents/`;
+images/SVG/HTML -> `assets/`; zips & dead files -> `archive/`; scratch -> `tmp/`.
+Never hand-place files in `data/` or `logs/` (engine-owned runtime state).
