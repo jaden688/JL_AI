@@ -25,9 +25,7 @@ const _COGNITIVE_HOOK = Ref{Any}(nothing)
 
 function _telemetry_root(project_root::String)
     configured = strip(get(ENV, "SPARKBYTE_STATE_DIR", ""))
-    # Default: dedicated logs/ folder (not the project root). Explicit
-    # SPARKBYTE_STATE_DIR override is honored as-is.
-    root = isempty(configured) ? joinpath(project_root, "logs") : abspath(configured)
+    root = isempty(configured) ? project_root : abspath(configured)
     mkpath(root)
     return root
 end
@@ -179,7 +177,13 @@ function log_engine_snapshot(snapshot::Dict)
         "aperture_temp"   => get(get(snapshot, "aperture_state", Dict()), "temp", 0.0),
         "aperture_top_p"  => get(get(snapshot, "aperture_state", Dict()), "top_p", 0.0),
         "behavior_state"  => get(get(snapshot, "behavior_state", Dict()), "name", ""),
+        "behavior_number" => get(get(snapshot, "behavior_state", Dict()), "number", 0),
+        "behavior_intensity" => get(snapshot, "behavior_intensity", 0.0),
         "behavior_expr"   => get(get(snapshot, "behavior_state", Dict()), "expressiveness", 0.0),
+        "mpf_state"       => get(get(snapshot, "mpf_state_profile", Dict()), "label", ""),
+        "mpf_profile_source" => get(get(snapshot, "mpf_state_profile", Dict()), "source", ""),
+        "mpf_temp_delta"  => get(get(snapshot, "mpf_sampling_bias", Dict()), "temperature", 0.0),
+        "mpf_top_p_delta" => get(get(snapshot, "mpf_sampling_bias", Dict()), "top_p", 0.0),
         "drift_pressure"  => get(get(snapshot, "drift", Dict()), "pressure", 0.0),
         "drift_temp_delta"=> get(get(snapshot, "drift", Dict()), "temperature_delta", 0.0),
         "advisory_msg"    => get(get(snapshot, "advisory", Dict()), "msg", ""),
@@ -357,10 +361,14 @@ function log_system_prompt(prompt, snapshot)
         "engine_gait"       => string(get(snapshot, "gait", "")),
         "engine_agent"    => string(get(snapshot, "agent", "")),
         "engine_trigger"    => string(get(snapshot, "trigger", "")),
+        "behavior_intensity"=> get(snapshot, "behavior_intensity", 0.0),
+        "behavior_number"   => get(behavior, "number", 0),
         "behavior_name"     => string(get(behavior, "name", "")),
         "behavior_expr"     => get(behavior, "expressiveness", 0.0),
         "behavior_pacing"   => string(get(behavior, "pacing", "")),
-        "behavior_tone"     => string(get(behavior, "tone", "")),
+        "behavior_tone"     => string(get(behavior, "tone_bias", "")),
+        "mpf_state"         => string(get(get(snapshot, "mpf_state_profile", Dict()), "label", "")),
+        "mpf_profile_source"=> string(get(get(snapshot, "mpf_state_profile", Dict()), "source", "")),
         "rhythm_mode"       => string(get(rhythm,   "mode", "")),
         "rhythm_momentum"   => get(rhythm,   "momentum",    0.0),
         "aperture_mode"     => string(get(aperture, "mode", "")),
@@ -379,19 +387,24 @@ end
 function log_param_decision(gen_config, snapshot)
     aperture = get(snapshot, "aperture_state", Dict())
     drift    = get(snapshot, "drift",          Dict())
+    state_bias = get(snapshot, "mpf_sampling_bias", Dict())
     base_temp  = get(aperture, "temp",              0.45)
     delta_temp = get(drift,    "temperature_delta", 0.0)
+    mpf_temp = get(state_bias, "temperature", 0.0)
+    mpf_top_p = get(state_bias, "top_p", 0.0)
     final_temp = get(gen_config, "temperature",     0.0)
     log_event("param_decision", Dict{String,Any}(
         "base_temp"       => base_temp,
         "drift_delta"     => delta_temp,
+        "mpf_temp_delta"  => mpf_temp,
+        "mpf_top_p_delta" => mpf_top_p,
         "final_temp"      => final_temp,
         "final_top_p"     => get(gen_config, "topP", 0.0),
         "thinking_level"  => get(get(gen_config, "thinking_config", Dict()), "thinking_level", "none"),
         "aperture_mode"   => string(get(aperture, "mode", "")),
         "drift_pressure"  => get(drift, "pressure", 0.0),
-        "why_temp"        => "aperture_base=$(round(base_temp,digits=3)) + drift_delta=$(round(delta_temp,digits=3)) = $(round(final_temp,digits=3))",
-        "why_top_p"       => "clamped aperture top_p = $(get(aperture,"top_p",0.7)) → $(get(gen_config,"topP",0.0))",
+        "why_temp"        => "aperture_base=$(round(base_temp,digits=3)) + drift_delta=$(round(delta_temp,digits=3)) + mpf_cell=$(round(mpf_temp,digits=3)) = $(round(final_temp,digits=3))",
+        "why_top_p"       => "aperture_top_p=$(get(aperture,"top_p",0.7)) + mpf_cell=$(round(mpf_top_p,digits=3)) → $(get(gen_config,"topP",0.0))",
     ))
 end
 

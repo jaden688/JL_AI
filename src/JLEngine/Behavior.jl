@@ -16,9 +16,10 @@ function _int_or(value, default::Int)
     end
 end
 
-function _behavior_state_from_dict(data)
-    data isa AbstractDict || return BehaviorState()
+function _behavior_state_from_dict(data, fallback_number::Int)
+    data isa AbstractDict || return BehaviorState(number=fallback_number)
     return BehaviorState(
+        number=_int_or(get(data, "number", fallback_number), fallback_number),
         id=String(get(data, "id", "0,0")),
         name=String(get(data, "name", "Unknown")),
         expressiveness=_float_or(get(data, "expressiveness", 0.5), 0.5),
@@ -46,37 +47,61 @@ function BehaviorStateMachine(config_path::AbstractString)
     states = Vector{Vector{BehaviorState}}()
 
     if raw_rows isa AbstractVector
-        for row in raw_rows
+        for (row_index, row) in enumerate(raw_rows)
             row isa AbstractVector || continue
-            push!(states, [_behavior_state_from_dict(item) for item in row])
+            parsed_row = BehaviorState[]
+            for (col_index, item) in enumerate(row)
+                fallback_number = (row_index - 1) * length(row) + col_index
+                push!(parsed_row, _behavior_state_from_dict(item, fallback_number))
+            end
+            isempty(parsed_row) || push!(states, parsed_row)
         end
     end
 
     if isempty(states)
-        states = [[BehaviorState() for _ in 1:4] for _ in 1:5]
+        states = [
+            [
+                BehaviorState(
+                    number=row * 4 + col + 1,
+                    id="$(row),$(col)",
+                    name="Cell $(lpad(string(row * 4 + col + 1), 2, '0'))",
+                )
+                for col in 0:3
+            ]
+            for row in 0:4
+        ]
     end
 
     trigger_mappings = Dict{String, Tuple{Int, Int}}()
     raw_mappings = get(config, "trigger_mappings", Dict{String, Any}())
     if raw_mappings isa AbstractDict
-        for (trigger, coords) in raw_mappings
-            coords isa AbstractVector || continue
-            length(coords) >= 2 || continue
-            trigger_mappings[String(trigger)] = (_int_or(coords[1], 2), _int_or(coords[2], 1))
+        for (trigger, target) in raw_mappings
+            coords = nothing
+            if target isa AbstractVector && length(target) >= 2
+                coords = (_int_or(target[1], 2), _int_or(target[2], 1))
+            elseif target isa Real || target isa AbstractString
+                number = _int_or(target, 10)
+                coords = _coords_for_number(states, number)
+            end
+            coords === nothing || (trigger_mappings[String(trigger)] = coords)
         end
     end
 
     dims = get(config, "grid_dimensions", Dict{String, Any}())
-    rows = dims isa AbstractDict ? _int_or(get(dims, "rows", length(states)), length(states)) : length(states)
-    cols = dims isa AbstractDict ? _int_or(get(dims, "columns", length(first(states))), length(first(states))) : length(first(states))
+    configured_rows = dims isa AbstractDict ? _int_or(get(dims, "rows", length(states)), length(states)) : length(states)
+    configured_cols = dims isa AbstractDict ? _int_or(get(dims, "columns", length(first(states))), length(first(states))) : length(first(states))
+    rows = min(configured_rows, length(states))
+    cols = min(configured_cols, minimum(length.(states)))
+    default_coords = _coords_for_number(states, _int_or(get(config, "default_state", 10), 10))
+    default_row, default_col = default_coords === nothing ? (min(2, rows - 1), min(1, cols - 1)) : default_coords
 
     machine = BehaviorStateMachine(
         states,
         trigger_mappings,
         rows,
         cols,
-        2,
-        0,
+        default_row,
+        default_col,
         Dict{String, Any}("level" => "allow", "weight" => 0.0, "reason" => nothing),
         0.0,
         nothing,
@@ -88,6 +113,15 @@ end
 current_state(machine::BehaviorStateMachine) = machine.states[machine.current_row + 1][machine.current_col + 1]
 current_blend(machine::BehaviorStateMachine) = machine.last_blend
 
+function _coords_for_number(states::Vector{Vector{BehaviorState}}, number::Integer)
+    for (row_index, row) in enumerate(states)
+        for (col_index, state) in enumerate(row)
+            state.number == Int(number) && return (row_index - 1, col_index - 1)
+        end
+    end
+    return nothing
+end
+
 function set_state_by_coords!(machine::BehaviorStateMachine, row::Integer, col::Integer)
     machine.current_row = clamp(Int(row), 0, machine.rows - 1)
     machine.current_col = clamp(Int(col), 0, machine.columns - 1)
@@ -95,13 +129,23 @@ function set_state_by_coords!(machine::BehaviorStateMachine, row::Integer, col::
     return current_state(machine)
 end
 
+function set_state_by_number!(machine::BehaviorStateMachine, number::Integer)
+    coords = _coords_for_number(machine.states, number)
+    coords === nothing && return false
+    set_state_by_coords!(machine, coords...)
+    return true
+end
+
 function set_state_by_label!(machine::BehaviorStateMachine, label::AbstractString)
     target = lowercase(strip(label))
     isempty(target) && return false
+    numeric_target = tryparse(Int, replace(target, r"^(?:cell|#)\s*" => ""))
 
     for (r, row) in enumerate(machine.states)
         for (c, state) in enumerate(row)
-            if lowercase(state.name) == target || lowercase(state.id) == target
+            if lowercase(state.name) == target ||
+               lowercase(state.id) == target ||
+               (numeric_target !== nothing && state.number == numeric_target)
                 set_state_by_coords!(machine, r - 1, c - 1)
                 return true
             end
@@ -110,7 +154,13 @@ function set_state_by_label!(machine::BehaviorStateMachine, label::AbstractStrin
     return false
 end
 
-function transition_by_trigger!(machine::BehaviorStateMachine, trigger::Union{Nothing, AbstractString}, gait::AbstractString; gating_advice=nothing)
+function transition_by_trigger!(
+    machine::BehaviorStateMachine,
+    trigger::Union{Nothing, AbstractString},
+    gait::AbstractString;
+    gating_advice=nothing,
+    intensity_hint=nothing,
+)
     advice = _normalize_advice(gating_advice === nothing ? machine.gating_advice : gating_advice)
     if get(advice, "level", "allow") == "weak_block"
         machine.gating_advice = advice
@@ -122,12 +172,18 @@ function transition_by_trigger!(machine::BehaviorStateMachine, trigger::Union{No
         target_row, target_col = machine.trigger_mappings[String(trigger)]
         gait_lower = lowercase(strip(gait))
 
-        if gait_lower in ("trot", "gallop")
-            target_row = min(machine.rows - 1, target_row + 1)
-        elseif gait_lower == "sprint"
-            target_row = min(machine.rows - 1, target_row + 2)
-        elseif gait_lower == "idle"
-            target_row = max(0, target_row - 1)
+        if intensity_hint isa Real
+            # Signal intensity owns the row; trigger semantics select the column.
+            # Five equal bands make every grid row reachable.
+            target_row = clamp(floor(Int, clamp(Float64(intensity_hint), 0.0, 1.0) * machine.rows), 0, machine.rows - 1)
+        else
+            if gait_lower in ("trot", "gallop")
+                target_row = min(machine.rows - 1, target_row + 1)
+            elseif gait_lower == "sprint"
+                target_row = min(machine.rows - 1, target_row + 2)
+            elseif gait_lower == "idle"
+                target_row = max(0, target_row - 1)
+            end
         end
 
         if get(advice, "level", "allow") == "weak_block"
@@ -167,7 +223,7 @@ function _normalize_advice(advice)
 end
 
 function _state_summary(state::BehaviorState)
-    return Dict{String, Any}("id" => state.id, "name" => state.name)
+    return Dict{String, Any}("number" => state.number, "id" => state.id, "name" => state.name)
 end
 
 function _compute_blend!(machine::BehaviorStateMachine)

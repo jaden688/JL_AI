@@ -103,48 +103,39 @@ function update_from_signals!(
     )
 
     computed = _compute(aperture, signal_payload)
-
-    # ── Gear dynamics ────────────────────────────────────────────────────
-    # The agent's drive_type (spur/worm/cvt/planetary) governs HOW the
-    # aperture moves toward the signal-computed target, not where the target
-    # lands. We ease the previous score toward the new target with a step
-    # size derived from the gear: alpha = reaction_speed × (1 − mode_inertia).
-    #   worm → sluggish, sticky (low alpha)    planetary → snappy (high alpha)
-    # The same easing is applied to focus/overload, so a "heavy" gear feels
-    # heavy everywhere, not just in the mode label.
-    gear = gear_modifiers(aperture.drive_type)
-    alpha = clamp(gear.reaction_speed * (1.0 - gear.mode_inertia), 0.0, 1.0)
-
-    target_score = _float_or(get(computed, "score", 0.25), 0.25)
-    prev_score = _float_or(get(aperture.last_state, "score", target_score), target_score)
-    blended_score = clamp(prev_score + alpha * (target_score - prev_score), 0.0, 1.0)
-    # Re-assert the safety ceiling after blending: a prior high-openness turn
-    # must not leak past a freshly-enabled safety cap through inertia.
-    Bool(get(signal_payload, "safety_mode", true)) && (blended_score = min(blended_score, 0.60))
-
-    mode = _mode_from_score(blended_score)
-    modifiers = APERTURE_MODIFIERS[mode]
-
-    target_focus, target_overload = _derive_focus_overload(signal_payload)
-    aperture.focus_level = clamp(aperture.focus_level + alpha * (target_focus - aperture.focus_level), 0.0, 1.0)
-    aperture.overload_level = clamp(aperture.overload_level + alpha * (target_overload - aperture.overload_level), 0.0, 1.0)
-
+    aperture.focus_level, aperture.overload_level = _derive_focus_overload(signal_payload)
     aperture.last_state = _build_state(
-        blended_score,
-        mode,
-        Dict{String, Any}(modifiers),
+        get(computed, "score", 0.0),
+        String(get(computed, "mode", "GUARDED")),
+        Dict{String, Any}(get(computed, "modifiers", APERTURE_MODIFIERS["GUARDED"])),
         aperture.focus_level,
         aperture.overload_level,
         aperture.current_emotion,
         aperture.current_emotion_meta,
         aperture.drift_bias,
     )
-    # Surface the gear so telemetry/UI can see it acting.
-    aperture.last_state["drive_type"] = aperture.drive_type
-    aperture.last_state["gear_alpha"] = round(alpha; digits=3)
 
     selected_emotion = _select_emotion(aperture, aperture.last_state["score"], signal_payload, behavior_state)
     _apply_selected_emotion!(aperture, selected_emotion)
+    return Dict{String, Any}(aperture.last_state)
+end
+
+function update_from_signal!(aperture::EmotionalAperture; emotion=nothing, focus_delta::Real=0.0, overload_delta::Real=0.0)
+    modifiers = gear_modifiers(aperture.drive_type)
+    emotion !== nothing && (aperture.current_emotion = String(emotion))
+
+    scaled_focus = Float64(focus_delta) * modifiers.reaction_speed
+    scaled_overload = Float64(overload_delta) * modifiers.reaction_speed
+    inertia = modifiers.mode_inertia
+    inv_inertia = 1.0 - inertia
+
+    aperture.focus_level = clamp(aperture.focus_level * inertia + scaled_focus * inv_inertia, 0.0, 1.0)
+    aperture.overload_level = clamp(aperture.overload_level * inertia + scaled_overload * inv_inertia, 0.0, 1.0)
+    aperture.last_state["focus_level"] = aperture.focus_level
+    aperture.last_state["overload_level"] = aperture.overload_level
+    aperture.last_state["emotion"] = aperture.current_emotion
+    aperture.last_state["emotion_meta"] = aperture.current_emotion_meta
+    _write_agent_emotion!(aperture, aperture.current_emotion, aperture.current_emotion_meta)
     return Dict{String, Any}(aperture.last_state)
 end
 
@@ -208,7 +199,10 @@ function _compute(aperture::EmotionalAperture, signals::AbstractDict)
     score = clamp(score, 0.0, 1.0)
 
     safety_mode = Bool(get(signals, "safety_mode", true))
-    safety_mode && (score = min(score, 0.60))
+    # Safety mode is a brake for actual drift, not a permanent ceiling on
+    # personality. Nominal turns may use the full aperture range.
+    safety_mode && _float_or(get(signals, "drift_pressure", 0.0), 0.0) >= 0.50 &&
+        (score = min(score, 0.60))
 
     mode = _mode_from_score(score)
     return Dict{String, Any}(

@@ -16,10 +16,8 @@ import Dates: now
 
 function _health_state_dir()
     configured = strip(get(ENV, "SPARKBYTE_STATE_DIR", ""))
-    # Default: dedicated logs/ folder (not the project root). Explicit
-    # SPARKBYTE_STATE_DIR override is honored as-is.
     dir = if isempty(configured)
-        joinpath(@__DIR__, "logs")
+        @__DIR__
     else
         abspath(configured)
     end

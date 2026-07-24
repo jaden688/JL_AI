@@ -88,9 +88,16 @@ global _current_gear  = "LITE_REASONING"
 global _active_modes  = ["SASS", "HUMAN", "BINDING"]
 const  _generation_abort = Ref(false)   # set true to break the agentic loop
 
+const _GEMMA_MODELS = [
+    "gemma-4-31b-it", "gemma-4-26b-a4b-it", "gemma-3-27b-it", "gemma-3-12b-it",
+    "google/gemma-2-27b-it", "google/gemma-2-9b-it"
+]
 const _NO_TOOL_MODELS = String[]
+const _NO_TOOL_MODEL_PREFIXES = ["x-ai/", "poolside/"]
 
 function _model_supports_tools(model::AbstractString)::Bool
+    model in _NO_TOOL_MODELS && return false
+    any(prefix -> startswith(model, prefix), _NO_TOOL_MODEL_PREFIXES) && return false
     return true
 end
 
@@ -850,10 +857,14 @@ function process_message(ws, raw_msg::String, history::Vector, engine)
     log_engine_snapshot(snapshot)
     log_cognitive_state(snapshot)  # 🧠 broadcast engine state to terminal
 
+    behavior_state = get(snapshot, "behavior_state", Dict{String,Any}())
+    mpf_profile = get(snapshot, "mpf_state_profile", Dict{String,Any}())
+    behavior_mode = "#$(get(behavior_state, "number", "?")): $(get(mpf_profile, "label", get(behavior_state, "name", "Unknown")))"
+
     _current_gear  = snapshot["gait"]
     _active_modes  = [snapshot["rhythm"]["mode"],
                       snapshot["aperture_state"]["mode"],
-                      snapshot["behavior_state"]["name"]]
+                      behavior_mode]
     out_ui = Dict("type"=>"ui_update", "gear"=>uppercase(_current_gear), "modes"=>_active_modes)
 _ws_send(ws, JSON.json(out_ui)); log_ws_message_out(out_ui)
 
@@ -862,18 +873,27 @@ _ws_send(ws, JSON.json(out_ui)); log_ws_message_out(out_ui)
 # later updates the bubble with the final reply. Fixes the "engine frozen" feel.
 think_text = "🧠 Reasoning…"
 _ws_send(ws, JSON.json(Dict("type"=>"thinking", "text"=>think_text, "delta"=>false)))
-log_ws_message_out(Dict("type"=>"thinking", "text"=>think_text, "delta"=>false))
+    log_ws_message_out(Dict("type"=>"thinking", "text"=>think_text, "delta"=>false))
 
     boot_prompt = Main.JLEngine.get_llm_boot_prompt(engine)
-    sys_prompt  = boot_prompt *
-        "\n\n--- JL ENGINE COGNITIVE STATE ---\n" *
-        "GAIT: $(_current_gear)\n" *
-        "RHYTHM MODE: $(snapshot["rhythm"]["mode"])\n" *
-        "EMOTIONAL APERTURE: $(snapshot["aperture_state"]["mode"])\n" *
-        "BEHAVIOR STATE: $(snapshot["behavior_state"]["name"])\n" *
-        "DRIFT PRESSURE: $(round(snapshot["drift"]["pressure"]; digits=3))\n" *
-        "ADVISORY: $(get(snapshot["advisory"], "msg", "None"))" *
-        "\n\n" * _build_self_context(engine)
+    mpf_directive = string(get(snapshot, "mpf_state_directive", ""))
+    cognitive_state = """
+--- JL ENGINE COGNITIVE STATE ---
+TRIGGER: $(get(snapshot, "trigger", "neutral"))
+GAIT: $(_current_gear)
+RHYTHM MODE: $(snapshot["rhythm"]["mode"])
+EMOTIONAL APERTURE: $(snapshot["aperture_state"]["mode"])
+BEHAVIOR CELL: #$(get(behavior_state, "number", "?")) [$(get(behavior_state, "id", "?"))]
+MPF OPERATOR STATE: $(get(mpf_profile, "label", get(behavior_state, "name", "Unknown")))
+DRIFT PRESSURE: $(round(snapshot["drift"]["pressure"]; digits=3))
+ADVISORY: $(get(snapshot["advisory"], "msg", "None"))
+"""
+    # Put the per-cell operator payload last so it remains the freshest style
+    # instruction regardless of which model/provider consumes the prompt.
+    sys_prompt = boot_prompt *
+        "\n\n" * _build_self_context(engine) *
+        "\n\n" * cognitive_state *
+        (isempty(mpf_directive) ? "" : "\n\n" * mpf_directive)
 
     # ── Provider profiles ───────────────────────────────────────────────────
     # Single source of truth for every provider's capabilities and wire‑up.
@@ -907,16 +927,19 @@ log_ws_message_out(Dict("type"=>"thinking", "text"=>think_text, "delta"=>false))
     pp = PROVIDER_PROFILES[provider]
 
     # ── Params ───────────────────────────────────────────────────────────────
+    state_sampling = get(snapshot, "mpf_sampling_bias", Dict{String,Any}())
     temp  = clamp(get(snapshot["aperture_state"],"temp",0.45) +
-                  get(snapshot["drift"],"temperature_delta",0.0), 0.1, 1.5)
-    top_p = clamp(get(snapshot["aperture_state"],"top_p",0.7), 0.1, 1.0)
+                  get(snapshot["drift"],"temperature_delta",0.0) +
+                  get(state_sampling,"temperature",0.0), 0.1, 1.5)
+    top_p = clamp(get(snapshot["aperture_state"],"top_p",0.7) +
+                  get(state_sampling,"top_p",0.0), 0.1, 1.0)
 
     # Gemini-specific generation config
     safety = [Dict("category"=>"HARM_CATEGORY_$c", "threshold"=>"BLOCK_NONE")
               for c in ["HATE_SPEECH","HARASSMENT","DANGEROUS_CONTENT","SEXUALLY_EXPLICIT","CIVIC_INTEGRITY"]]
     gen_config = Dict{String,Any}("temperature"=>temp, "topP"=>top_p)
     # thinking_config only on models that actually support it (2.5+, 3.x) — never Gemma or 2.0
-    _supports_thinking = (
+    _supports_thinking = !(_current_model in _GEMMA_MODELS) && (
         occursin("2.5", _current_model) ||
         occursin("thinking", lowercase(_current_model)) ||
         match(r"gemini-3", _current_model) !== nothing
@@ -932,7 +955,10 @@ log_ws_message_out(Dict("type"=>"thinking", "text"=>think_text, "delta"=>false))
             gen_config["thinking_config"] = Dict("thinking_level"=>"HIGH")
         end
     end
-    # All models get tools — restrictions removed. OpenRouter fallback still works.
+    # Gemma → force chat mode (no tools)
+    if _current_model in _GEMMA_MODELS || !_model_supports_tools(_current_model)
+        chat_mode = true
+    end
 
     log_system_prompt(sys_prompt, snapshot)
     log_param_decision(gen_config, snapshot)
@@ -1013,7 +1039,6 @@ log_ws_message_out(Dict("type"=>"thinking", "text"=>think_text, "delta"=>false))
     max_tool_loops = 30
     max_repeat_tool_calls = 4
     tool_guard_hit = false
-    tool_fallback_tried = false   # one-shot: retry in chat-mode if model has no tool endpoint
     last_tool_signature = ""
     same_tool_streak = 0
     last_tool_name_used = ""
@@ -1260,22 +1285,6 @@ log_ws_message_out(Dict("type"=>"thinking", "text"=>think_text, "delta"=>false))
             else
                 ""
             end
-
-            # ── Auto-fallback: model has no tool-capable endpoint ────────────
-            # Many models (especially :free ones) can't do function-calling.
-            # OpenRouter signals this with a 404 whose body says "support tool
-            # use". Rather than fail the turn, retry ONCE in chat-only mode.
-            if e isa HTTP.Exceptions.StatusError && e.status == 404 &&
-               occursin("support tool use", lowercase(status_body)) &&
-               !chat_mode && !tool_fallback_tried
-                tool_fallback_tried = true
-                chat_mode = true
-                note = "⚙️ `$(_current_model)` has no tool-capable endpoint — retrying in chat-only mode (tools off)."
-                _ws_send(ws, JSON.json(Dict("type"=>"spark","text"=>note)))
-                log_cognitive_api(_current_model, "info", "tool-support 404 → chat-mode fallback")
-                continue
-            end
-
             # Categorize the error for user-friendly messaging
             user_msg = if e isa HTTP.Exceptions.StatusError
                 "🚫 **API Error (HTTP $(e.status))**\n\n" *
@@ -1317,9 +1326,19 @@ log_ws_message_out(Dict("type"=>"thinking", "text"=>think_text, "delta"=>false))
     log_ws_message_out(done_payload)
 
 # Feed output back to engine memory + log turn complete
-!isempty(final_reply) && Main.JLEngine.record_turn!(engine, txt, final_reply; snapshot=snapshot)
+    !isempty(final_reply) && Main.JLEngine.record_turn!(engine, txt, final_reply; snapshot=snapshot)
     elapsed_total = round(Int, datetime2unix(now()) * 1000) - turn_start_ms
     log_turn_complete(txt, length(final_reply), loop_iter, elapsed_total)
+    _db_write_turn_snapshot(
+        snapshot,
+        string(engine.current_agent_name),
+        string(_current_model),
+        _session_id,
+        _turn_counter[],
+        length(txt),
+        length(final_reply),
+        elapsed_total,
+    )
 
     # Telemetry broadcast — drives the live panel in the UI
     try
@@ -1329,7 +1348,11 @@ log_ws_message_out(Dict("type"=>"thinking", "text"=>think_text, "delta"=>false))
             "gait"            => string(get(snapshot, "gait", _current_gear)),
             "rhythm_mode"     => string(get(get(snapshot,"rhythm",Dict{String,Any}()),"mode","—")),
             "aperture_mode"   => string(get(get(snapshot,"aperture_state",Dict{String,Any}()),"mode","—")),
-            "behavior_state"  => string(get(get(snapshot,"behavior_state",Dict{String,Any}()),"name","—")),
+            "behavior_state"  => behavior_mode,
+            "behavior_diagnostic" => string(get(get(snapshot,"behavior_state",Dict{String,Any}()),"name","—")),
+            "behavior_number" => get(get(snapshot,"behavior_state",Dict{String,Any}()),"number",0),
+            "behavior_intensity" => round(get(snapshot, "behavior_intensity", 0.0); digits=3),
+            "mpf_state"       => string(get(get(snapshot,"mpf_state_profile",Dict{String,Any}()),"label","—")),
             "drift_pressure"  => drift_p,
             "stability_score" => round(engine.stability_score; digits=3),
             "loop_count"      => Int(loop_iter),
@@ -1347,14 +1370,16 @@ log_ws_message_out(Dict("type"=>"thinking", "text"=>think_text, "delta"=>false))
     # Live memory: write thought diary entry to SQLite + flush session event count
     @async try
         behavior   = get(snapshot, "behavior_state", Dict())
-        tone       = string(get(behavior, "tone_bias", "agentble"))
-        bname      = string(get(behavior, "name", "Engaged-Loose"))
+        mpf_profile = get(snapshot, "mpf_state_profile", Dict())
+        tone       = string(get(behavior, "tone_bias", "adaptable"))
+        bname      = string(get(mpf_profile, "label", get(behavior, "name", "Unknown")))
+        cell       = get(behavior, "number", 0)
         mood       = replace(lowercase(bname), r"[^a-z/]" => "-")
         gait       = string(get(snapshot, "gait", "walk"))
         agent    = string(engine.current_agent_name)
         thought    = "Responded to: \"$(first(txt, 120))\". " *
                      "Reply ($(length(final_reply)) chars): $(first(final_reply, 220)). " *
-                     "Tone: $tone. Loops: $loop_iter. Elapsed: $(elapsed_total)ms."
+                     "Cell: #$cell ($bname). Tone: $tone. Loops: $loop_iter. Elapsed: $(elapsed_total)ms."
         _db_write_thought(first(txt, 80), thought, mood, gait, agent)
         @info "💭 Thoughts: " thought
         # Flush live event count to sessions table — survives force kills

@@ -22,6 +22,7 @@ Base.@kwdef struct EngineConfig
     root_dir::String = pwd()
     master_file::String = "JLframe_Engine_Framework.json"
     behavior_states_file::String = "behavior_states.json"
+    signal_lexicon_file::String = "signal_lexicon.json"
     mpf_registry_file::String = joinpath("agents", "Agents.mpf.json")
     agents_dir::String = "agents"
     safety_on::Bool = true
@@ -38,6 +39,7 @@ Base.@kwdef struct MPFProfile
 end
 
 Base.@kwdef struct BehaviorState
+    number::Int = 1
     id::String = "0,0"
     name::String = "Unknown"
     expressiveness::Float64 = 0.5
@@ -46,12 +48,13 @@ Base.@kwdef struct BehaviorState
     memory_strictness::String = "medium"
 end
 
-Base.string(state::BehaviorState) = "[$(state.id)] $(state.name)"
+Base.string(state::BehaviorState) = "[#$(state.number) / $(state.id)] $(state.name)"
 
 function instructions(state::BehaviorState)
     return join(
         [
-            "Current Behavior State: $(state.name) ($(state.id)).",
+            "Current Behavior Cell: #$(state.number) ($(state.id)).",
+            "- Diagnostic Label: $(state.name)",
             "- Expressiveness Level: $(round(state.expressiveness * 100; digits=1))%",
             "- Conversational Pacing: $(state.pacing)",
             "- Dominant Tone: $(state.tone_bias)",
@@ -68,7 +71,13 @@ struct TurnSignals
     confusion::Float64
     pace::Float64
     memory_density::Float64
+    playfulness::Float64
+    distress::Float64
 end
+
+# Compatibility for extensions that still construct the original six-signal shape.
+TurnSignals(sentiment, arousal, directive, confusion, pace, memory_density) =
+    TurnSignals(sentiment, arousal, directive, confusion, pace, memory_density, 0.0, 0.0)
 
 struct RhythmState
     mode::String

@@ -36,8 +36,11 @@ const TRIGGER_TO_RHYTHM = Dict(
     "user_joking" => "flip",
     "user_frustrated" => "flop",
     "user_confused" => "flop",
+    "user_overwhelmed" => "flop",
     "user_anxious" => "flop",
     "user_distressed" => "flop",
+    "user_serious_or_tired" => "flop",
+    "user_engaged" => "flip",
     "user_directive" => "flip",
     "neutral" => "flip",
 )
@@ -96,7 +99,7 @@ function compute(
                 "gait" => gait,
                 "drift_pressure" => drift_pressure,
                 "safety_on" => safety_on,
-                "behavior_state" => behavior_state === nothing ? nothing : behavior_state.name,
+                "behavior_state" => behavior_state === nothing ? nothing : behavior_state.number,
                 "modulation_hint" => modulation_hint,
             ),
             "stages" => Dict{String, Any}(
@@ -138,11 +141,9 @@ _base_mode_from_trigger(trigger::AbstractString) = _normalize_mode(get(TRIGGER_T
 
 function _apply_behavior_bias(current_mode::AbstractString, behavior_state::Union{Nothing, BehaviorState})
     behavior_state === nothing && return String(current_mode)
-    name_lower = lowercase(behavior_state.name)
-    (occursin("unleashed", name_lower) || occursin("hyper", name_lower) || occursin("charged", name_lower)) && return "trot"
-    if occursin("calm", name_lower) || occursin("stable", name_lower)
-        current_mode == "trot" && return "flip"
-    end
+    row = max(0, (behavior_state.number - 1) ÷ 4)
+    row >= 4 && return "trot"
+    row <= 1 && current_mode == "trot" && return "flip"
     return String(current_mode)
 end
 
@@ -162,8 +163,8 @@ end
 function _apply_safety_rules(current_mode::AbstractString, trigger::AbstractString, safety_on::Bool)
     !safety_on && return _normalize_mode(current_mode)
     mode = _normalize_mode(current_mode)
-    trigger in ("user_anxious", "user_distressed") && mode == "trot" && (mode = "flop")
-    trigger == "user_distressed" && (mode = "flop")
+    trigger in ("user_anxious", "user_distressed", "user_overwhelmed") && mode == "trot" && (mode = "flop")
+    trigger in ("user_distressed", "user_overwhelmed") && (mode = "flop")
     return mode
 end
 

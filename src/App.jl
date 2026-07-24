@@ -1,9 +1,7 @@
 using Dates
 using JSON
+using PythonCall
 using SQLite
-# PythonCall is loaded conditionally by BYTE/src/Tools.jl (PYTHON_AVAILABLE
-# guard) — a bare machine without Python must still boot the core engine.
-
 
 include(joinpath(@__DIR__, "..", "BYTE", "src", "BYTE.jl"))
 include(joinpath(@__DIR__, "..", "a2a_server.jl"))
@@ -73,8 +71,11 @@ function _open_memory_db(root::String)
         id INTEGER PRIMARY KEY, name TEXT UNIQUE, description TEXT, personality TEXT,
         tone TEXT, boot_prompt TEXT, active INTEGER DEFAULT 0, last_used TEXT)""")
     SQLite.execute(db, """CREATE TABLE IF NOT EXISTS behavior_states (
-        id INTEGER PRIMARY KEY, state_id TEXT UNIQUE, name TEXT, intensity INTEGER, control INTEGER,
+        id INTEGER PRIMARY KEY, state_number INTEGER, state_id TEXT UNIQUE, name TEXT, intensity INTEGER, control INTEGER,
         expressiveness REAL, pacing TEXT, tone_bias TEXT, memory_strictness TEXT, trigger_conditions TEXT)""")
+    # Forward migration for databases created before numbered grid cells.
+    behavior_columns = Set(String(row.name) for row in SQLite.DBInterface.execute(db, "PRAGMA table_info(behavior_states)"))
+    "state_number" in behavior_columns || SQLite.execute(db, "ALTER TABLE behavior_states ADD COLUMN state_number INTEGER")
     SQLite.execute(db, """CREATE TABLE IF NOT EXISTS sessions (
         id INTEGER PRIMARY KEY, session_id TEXT, started_at TEXT, ended_at TEXT,
         os TEXT, julia_ver TEXT, events INTEGER DEFAULT 0, notes TEXT)""")
@@ -117,11 +118,6 @@ function _open_memory_db(root::String)
 end
 
 function _start_browser_context()
-    if !BYTE.python_available()
-        @warn "Browser stack unavailable — Python is not installed. Core engine runs; browse_url is disabled."
-        return (; pw_instance=nothing, browser=nothing, browser_context=nothing)
-    end
-    pyimport = BYTE.pyimport
     try
         pyimport("playwright.sync_api")
     catch e
@@ -160,6 +156,11 @@ function _seed_self_context!(db::SQLite.DB, root::String)
         "src/App.jl",
         "src/JLEngine/Core.jl",
         "src/JLEngine/Types.jl",
+        "src/JLEngine/MPF.jl",
+        "src/JLEngine/Signals.jl",
+        "src/JLEngine/Behavior.jl",
+        "data/behavior_states.json",
+        "data/signal_lexicon.json",
         "data/agents/Agents.mpf.json",
     ]
     SQLite.execute(db, "DELETE FROM memory WHERE tag = 'self_src'")
@@ -179,8 +180,9 @@ function _seed_self_context!(db::SQLite.DB, root::String)
             for cell in row
                 coords = split(get(cell, "id", "0,0"), ",")
                 SQLite.execute(db, """INSERT OR REPLACE INTO behavior_states
-                    (state_id, name, intensity, control, expressiveness, pacing, tone_bias, memory_strictness, trigger_conditions)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+                    (state_number, state_id, name, intensity, control, expressiveness, pacing, tone_bias, memory_strictness, trigger_conditions)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+                    get(cell, "number", parse(Int, coords[1]) * 4 + parse(Int, coords[2]) + 1),
                     get(cell, "id", ""),
                     get(cell, "name", ""),
                     parse(Int, coords[1]),
@@ -199,6 +201,8 @@ function _seed_self_context!(db::SQLite.DB, root::String)
     agents_dir = joinpath(root, "data", "agents")
     mpf_path = joinpath(agents_dir, "Agents.mpf.json")
     SQLite.execute(db, "DELETE FROM agents")
+    SQLite.execute(db, "DELETE FROM knowledge WHERE domain = 'mpf_state_profile'")
+    SQLite.execute(db, "DELETE FROM knowledge WHERE domain = 'operator_state_profile'")
     if isfile(mpf_path)
         registry = JSON.parsefile(mpf_path)
         for (agent_name, agent_meta) in registry
@@ -211,7 +215,12 @@ function _seed_self_context!(db::SQLite.DB, root::String)
                 generic = get(fat["llm_profiles"], "generic_llm", Dict())
                 boot = get(generic, "boot_prompt", "")
             end
-            personality = JSON.json(get(fat, "personality_matrix", get(fat, "voice", Dict())))
+            mpf_profile = get(fat, "mpf_state_profile", get(fat, "behavior_grid_profile", Dict()))
+            fallback_personality = get(fat, "personality_matrix", get(fat, "voice", Dict()))
+            personality_payload = mpf_profile isa AbstractDict && !isempty(mpf_profile) ?
+                mpf_profile :
+                fallback_personality
+            personality = JSON.json(personality_payload)
             tone = get(get(fat, "voice", Dict()), "tone", get(identity, "archetype", ""))
             desc = get(identity, "description", "")
             SQLite.execute(db, """INSERT OR REPLACE INTO agents
@@ -225,8 +234,40 @@ function _seed_self_context!(db::SQLite.DB, root::String)
                 agent_name == "SparkByte" ? 1 : 0,
                 string(Dates.now())
             ))
+
+            profile_states = mpf_profile isa AbstractDict ? get(mpf_profile, "states", Dict()) : Dict()
+            if profile_states isa AbstractDict
+                for (state_number, state_payload) in profile_states
+                    state_payload isa AbstractDict || continue
+                    SQLite.execute(db, """INSERT INTO knowledge (domain, topic, content, source, learned)
+                        VALUES (?, ?, ?, ?, ?)""", (
+                        "mpf_state_profile",
+                        "$(agent_name):$(state_number)",
+                        JSON.json(state_payload),
+                        "data/agents/$(get(agent_meta, "agent_file", ""))",
+                        string(Dates.now())
+                    ))
+                end
+            end
         end
         println("  ✅ Agents: $(length(registry)) agents indexed")
+    end
+
+    lexicon_path = joinpath(root, "data", "signal_lexicon.json")
+    SQLite.execute(db, "DELETE FROM knowledge WHERE domain = 'signal_lexicon'")
+    if isfile(lexicon_path)
+        lexicon = JSON.parsefile(lexicon_path)
+        for (section, payload) in lexicon
+            payload isa AbstractDict || payload isa AbstractVector || continue
+            SQLite.execute(db, """INSERT INTO knowledge (domain, topic, content, source, learned)
+                VALUES (?, ?, ?, ?, ?)""", (
+                "signal_lexicon",
+                string(section),
+                JSON.json(payload),
+                "data/signal_lexicon.json",
+                string(Dates.now())
+            ))
+        end
     end
 
     SQLite.execute(db, "DELETE FROM knowledge WHERE domain = 'tool_schema'")
@@ -267,7 +308,9 @@ function _seed_self_context!(db::SQLite.DB, root::String)
         ("rhythm_modes",  "flip / flop / trot — pacing of response generation. Flip=reactive, Flop=deliberate, Trot=balanced."),
         ("aperture_modes","OPEN / FOCUSED / TIGHT — emotional temperature range. OPEN=high temp/creative, TIGHT=precise/low temp."),
         ("drift_pressure","0.0–1.0 pressure score. High drift = user is pushing hard, agent should adapt or resist."),
-        ("behavior_grid", "5 intensity rows (0=Dormant→4=Surge) × 4 control cols (0=Disciplined→3=Chaotic) = 20 named states."),
+        ("behavior_grid", "One model-agnostic engine in the JL lattice: 20 stable numbered cells in a 5×4 intensity/control grid. It emits a control coordinate, not a personality."),
+        ("mpf_state_profiles", "The Modular Personality Framework maps engine state to the active operator. Agent files may define mpf_state_profile.states keyed by behavior cell 1–20; each payload supplies that personality's language, stance, delivery, code signature, and bounded sampling bias."),
+        ("signal_lexicon", "data/signal_lexicon.json contains model-agnostic weighted input words and phrases. Signals describe the user; they never contain operator personality."),
         ("advisory_flags","gating_bias / emotional_drift / msg — engine advice to LLM on how to shape its reply this turn."),
         ("forge_new_tool","Evals Julia code directly into live BYTE module. Use to add persistent capabilities. Persists across reboots."),
         ("bluetooth_devices","Lists Bluetooth adapter state and known devices using the host operating system."),
@@ -293,6 +336,7 @@ function _seed_self_context!(db::SQLite.DB, root::String)
         "CREATE INDEX IF NOT EXISTS idx_knowledge_domain ON knowledge(domain)",
         "CREATE INDEX IF NOT EXISTS idx_knowledge_topic ON knowledge(domain, topic)",
         "CREATE INDEX IF NOT EXISTS idx_behavior_name ON behavior_states(name)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_behavior_number ON behavior_states(state_number)",
         "CREATE INDEX IF NOT EXISTS idx_agents_name ON agents(name)",
         "CREATE INDEX IF NOT EXISTS idx_telemetry_event ON telemetry(event)",
         "CREATE INDEX IF NOT EXISTS idx_telemetry_agent ON telemetry(agent)",
@@ -312,6 +356,7 @@ function _build_engine(root::String)
         root_dir             = joinpath(root, "data"),
         master_file          = "JLframe_Engine_Framework.json",
         behavior_states_file = "behavior_states.json",
+        signal_lexicon_file   = "signal_lexicon.json",
         mpf_registry_file    = "agents/Agents.mpf.json",
         agents_dir         = "agents",
         default_agent_name = "SparkByte",
@@ -388,19 +433,16 @@ function app_main(; host::String=get(ENV, "SPARKBYTE_HOST", DEFAULT_HOST),
             @warn "Failed to close SparkByte session cleanly" exception=(err, catch_backtrace())
         end
     end
-    # ── Safe browser cleanup with null guards ────────────────────────────────
     atexit() do
         try
-            browser_stack.browser !== nothing && browser_stack.browser.close()
+            browser_stack.browser.close()
         catch err
             @warn "Failed to close browser cleanly" exception=(err, catch_backtrace())
         end
     end
     atexit() do
         try
-            if browser_stack.pw_instance !== nothing
-                browser_stack.pw_instance.__exit__(nothing, nothing, nothing)
-            end
+            browser_stack.pw_instance.__exit__(nothing, nothing, nothing)
         catch err
             @warn "Failed to close Playwright cleanly" exception=(err, catch_backtrace())
         end

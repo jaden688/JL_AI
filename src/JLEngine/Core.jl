@@ -7,7 +7,6 @@ mutable struct JLEngineCore
     agent_state::Dict{String, Any}
     behavior_engine::BehaviorStateMachine
     emotional_aperture::EmotionalAperture
-    investment_system::InvestmentSystem
     signal_scorer::SignalScorer
     drift_system::DriftPressureSystem
     rhythm_engine::RhythmEngine
@@ -42,8 +41,7 @@ function JLEngineCore(config::EngineConfig=EngineConfig())
         agent_state,
         BehaviorStateMachine(resolve_path(config.root_dir, config.behavior_states_file)),
         EmotionalAperture(agent_state=agent_state),
-        InvestmentSystem(),
-        SignalScorer(),
+        SignalScorer(resolve_path(config.root_dir, config.signal_lexicon_file)),
         DriftPressureSystem(),
         RhythmEngine(),
         HybridMemorySystem(),
@@ -99,9 +97,9 @@ function analyze_turn!(engine::JLEngineCore, user_message::AbstractString; agent
     agent_name !== nothing && set_agent!(engine, String(agent_name))
 
     signals = score(engine.signal_scorer, user_message)
-    trigger = _derive_trigger(signals)
+    trigger = derive_trigger(signals)
     prev_gait = engine.current_gait
-    engine.current_gait = _infer_gait(signals)
+    engine.current_gait = infer_gait(signals)
 
     # ── Cognitive hook: gait change detected ─────────────────────────────
     if engine.cognitive_callback !== nothing
@@ -122,7 +120,16 @@ function analyze_turn!(engine::JLEngineCore, user_message::AbstractString; agent
     drift_response = get_response_action(engine.drift_system, pressure)
     advisory = advisory_payload(engine.state_manager, engine.stability_score, pressure)
     gating_advice = advisory["gating_bias"] > 0 ? Dict{String, Any}("level" => "weak_block", "weight" => advisory["gating_bias"]) : Dict{String, Any}("level" => "allow", "weight" => 0.0)
-    behavior_state = transition_by_trigger!(engine.behavior_engine, trigger, engine.current_gait; gating_advice=gating_advice)
+    grid_intensity = behavior_intensity(signals)
+    behavior_state = transition_by_trigger!(
+        engine.behavior_engine,
+        trigger,
+        engine.current_gait;
+        gating_advice=gating_advice,
+        intensity_hint=grid_intensity,
+    )
+    mpf_profile = resolve_mpf_state_profile(engine.current_agent_data, behavior_state)
+    mpf_bias = mpf_sampling_bias(mpf_profile)
 
     rhythm_state = compute(
         engine.rhythm_engine;
@@ -135,15 +142,6 @@ function analyze_turn!(engine::JLEngineCore, user_message::AbstractString; agent
         modulation_hint=advisory,
     )
     engine.current_rhythm_mode = rhythm_state.mode
-
-    # ── Investment → dynamic gear selection ──────────────────────────────
-    # How invested the agent is in this exchange (stakes/engagement, not
-    # valence) picks the aperture's gear for this turn, so the drive_type is
-    # context-driven instead of a static per-agent constant.
-    investment_level = update_investment!(engine.investment_system, signals;
-        momentum=rhythm_state.momentum, drift_pressure=pressure)
-    selected_gear = investment_gear(investment_level)
-    set_drive_type!(engine.emotional_aperture, selected_gear)
 
     inject_drift_bias!(engine.emotional_aperture, advisory["emotional_drift"])
     aperture_state = update_from_signals!(
@@ -160,6 +158,18 @@ function analyze_turn!(engine::JLEngineCore, user_message::AbstractString; agent
     )
     update_dynamic_weight!(engine.agent_manager, signals; rhythm_state=_rhythm_state_dict(rhythm_state), aperture_state=aperture_state)
     agent_projection = get_projection(engine.agent_manager)
+    mpf_directive = mpf_state_instructions(
+        behavior_state,
+        mpf_profile;
+        engine_context=Dict{String, Any}(
+            "trigger" => trigger,
+            "gait" => engine.current_gait,
+            "rhythm" => rhythm_state.mode,
+            "aperture" => get(aperture_state, "mode", "BALANCED"),
+            "drift_pressure" => pressure,
+            "advisory" => get(advisory, "msg", ""),
+        ),
+    )
 
     snapshot = Dict{String, Any}(
         "agent" => engine.current_agent_name,
@@ -168,14 +178,14 @@ function analyze_turn!(engine::JLEngineCore, user_message::AbstractString; agent
         "trigger" => trigger,
         "gait" => engine.current_gait,
         "signals" => _signals_dict(signals),
+        "behavior_intensity" => grid_intensity,
         "behavior_state" => _behavior_state_dict(behavior_state),
+        "mpf_state_profile" => mpf_profile,
+        "mpf_state_directive" => mpf_directive,
+        "mpf_sampling_bias" => mpf_bias,
         "behavior_blend" => current_blend(engine.behavior_engine),
         "rhythm" => _rhythm_state_dict(rhythm_state),
         "drift" => _drift_response_dict(drift_response),
-        "investment" => Dict{String, Any}(
-            "level" => round(investment_level; digits=3),
-            "gear" => selected_gear,
-        ),
         "aperture_state" => aperture_state,
         "advisory" => advisory,
         "core_rules" => engine.core_rules,
@@ -227,9 +237,21 @@ get_llm_boot_prompt(engine::JLEngineCore, target::AbstractString="generic_llm") 
 function run_turn!(engine::JLEngineCore, user_message::AbstractString; agent_name=nothing, backend_id=nothing, backend_overrides=nothing)
     snapshot = analyze_turn!(engine, user_message; agent_name=agent_name)
     messages = _build_messages(engine, user_message, snapshot)
+    sampling_bias = get(snapshot, "mpf_sampling_bias", Dict{String, Any}())
     options = Dict{String, Any}(
-        "temperature" => clamp(get(snapshot["aperture_state"], "temp", 0.45) + get(snapshot["drift"], "temperature_delta", 0.0), 0.1, 1.5),
-        "top_p" => clamp(get(snapshot["aperture_state"], "top_p", 0.7), 0.1, 1.0),
+        "temperature" => clamp(
+            get(snapshot["aperture_state"], "temp", 0.45) +
+            get(snapshot["drift"], "temperature_delta", 0.0) +
+            get(sampling_bias, "temperature", 0.0),
+            0.1,
+            1.5,
+        ),
+        "top_p" => clamp(
+            get(snapshot["aperture_state"], "top_p", 0.7) +
+            get(sampling_bias, "top_p", 0.0),
+            0.1,
+            1.0,
+        ),
     )
     backend = backend_id === nothing ? get_brain_backend() : get_backend(String(backend_id); overrides=backend_overrides)
     reply, backend_meta = generate(backend, messages; options=options)
@@ -251,22 +273,6 @@ function run_turn!(engine::JLEngineCore, user_message::AbstractString; agent_nam
     )
 end
 
-function _derive_trigger(signals::TurnSignals)
-    signals.sentiment > 0.5 && signals.arousal > 0.5 && return "user_hyped"
-    signals.sentiment < -0.3 && signals.arousal > 0.3 && return "user_frustrated"
-    signals.confusion > 0.6 && return "user_confused"
-    signals.sentiment < -0.4 && signals.arousal > 0.2 && return "user_distressed"
-    signals.directive && return "user_directive"
-    return "neutral"
-end
-
-function _infer_gait(signals::TurnSignals)
-    signals.confusion > 0.7 && signals.sentiment < 0 && return "idle"
-    signals.arousal >= 0.85 && return "sprint"
-    signals.arousal >= 0.60 && return "trot"
-    return "walk"
-end
-
 function _signals_dict(signals::TurnSignals)
     return Dict{String, Any}(
         "sentiment" => signals.sentiment,
@@ -275,11 +281,14 @@ function _signals_dict(signals::TurnSignals)
         "confusion" => signals.confusion,
         "pace" => signals.pace,
         "memory_density" => signals.memory_density,
+        "playfulness" => signals.playfulness,
+        "distress" => signals.distress,
     )
 end
 
 function _behavior_state_dict(state::BehaviorState)
     return Dict{String, Any}(
+        "number" => state.number,
         "id" => state.id,
         "name" => state.name,
         "expressiveness" => state.expressiveness,
@@ -322,8 +331,10 @@ function _build_messages(engine::JLEngineCore, user_text::AbstractString, snapsh
     end
     push!(lines, "")
     push!(lines, "ACTIVE AGENT: $(get(projection, "name", engine.current_agent_name))")
+    boot_prompt = get_llm_boot_prompt(engine)
+    !isempty(boot_prompt) && push!(lines, boot_prompt)
     base_prompt = get(projection, "base_prompt", "")
-    base_prompt isa AbstractString && !isempty(base_prompt) && push!(lines, String(base_prompt))
+    base_prompt isa AbstractString && !isempty(base_prompt) && base_prompt != boot_prompt && push!(lines, String(base_prompt))
     push!(lines, "")
     if isdefined(Main, :BYTE)
         push!(lines, Main.BYTE._build_self_context(engine))
@@ -335,6 +346,14 @@ function _build_messages(engine::JLEngineCore, user_text::AbstractString, snapsh
     push!(lines, "- Aperture mode: $(get(get(snapshot, "aperture_state", Dict{String, Any}()), "mode", "GUARDED"))")
     push!(lines, "- Drift pressure: $(round(get(get(snapshot, "drift", Dict{String, Any}()), "pressure", 0.0); digits=3))")
     push!(lines, "- Stability score: $(round(engine.stability_score; digits=3))")
+    behavior = get(snapshot, "behavior_state", Dict{String, Any}())
+    profile = get(snapshot, "mpf_state_profile", Dict{String, Any}())
+    push!(lines, "- Behavior cell: #$(get(behavior, "number", "?")) ($(get(profile, "label", get(behavior, "name", "Unknown"))))")
+    directive = get(snapshot, "mpf_state_directive", "")
+    directive isa AbstractString && !isempty(directive) && begin
+        push!(lines, "")
+        push!(lines, String(directive))
+    end
 
     history = Any[]
     memory_context = get(snapshot, "memory_context", Dict{String, Any}())
