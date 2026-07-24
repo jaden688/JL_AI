@@ -190,10 +190,10 @@ Optional:
   REDDIT_CLIENT_SECRET=...
   REDDIT_REFRESH_TOKEN=...
 
-Browser / Mission Control features:
-  Provisioned automatically on first use — a private Python env + Chromium are
-  fetched into the app's own folder the first time a browser feature runs.
-  Nothing to install by hand. Core engine runs immediately regardless.
+Browser / Mission Control features (optional):
+  Need Python 3.10+ on PATH with `pip install playwright`. Chromium itself is
+  fetched automatically on first browser use. Without Python the core engine
+  runs fine — browser features simply stay disabled.
 
 Run:
   $RUN_PATH

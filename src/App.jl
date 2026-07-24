@@ -1,3 +1,8 @@
+# Must be set before PythonCall loads: keeps CondaPkg dormant (no conda envs,
+# no downloads at boot) and binds to system python. See note in BYTE/src/Tools.jl.
+haskey(ENV, "JULIA_CONDAPKG_BACKEND") || (ENV["JULIA_CONDAPKG_BACKEND"] = "Null")
+haskey(ENV, "JULIA_PYTHONCALL_EXE") || (ENV["JULIA_PYTHONCALL_EXE"] = "python")
+
 using Dates
 using JSON
 using PythonCall
