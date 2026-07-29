@@ -121,3 +121,9 @@
 # -- tool_playwright_interact | 2026-07-23 00:50:14 | PASS --
 # args:   {}
 # result: {"raw_output":"{\"status\": \"ok\", \"data\": []}\r\n","result":"{\"status\": \"ok\", \"data\": []}\r\n","status":"ok"}
+# -- tool_roll_dice | 2026-07-24 02:18:25 | PASS --
+# args:   {}
+# result: {"notation":"1d6","num_dice":1,"num_sides":6,"rolls":[5],"summary":"1d6 → [5] = **5**","total":5}
+# -- tool_roll_dice | 2026-07-24 02:18:34 | PASS --
+# args:   {}
+# result: {"notation":"1d6","num_dice":1,"num_sides":6,"rolls":[5],"summary":"1d6 → [5] = **5**","total":5}

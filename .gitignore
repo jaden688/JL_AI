@@ -92,3 +92,13 @@ xai_response.txt
 data/xai_docs_screenshot.png
 data/evidence_gate_test.jl
 dotnet.zip
+
+# ── Wave-fabric research — lives in the private jl-wave-fabric repo ───────────
+# Kept on disk for local runs, never published from this PUBLIC repo.
+operators/notes/jl-conditioned-tensor-fusion.md
+operators/notes/jl-wave-coupled-model-fabric.md
+test/manual/tensor_fusion/
+test/manual/jipple_flux_transformer/
+
+# Multi-GB run scratch (cached hidden states, logit caches)
+tmp/
