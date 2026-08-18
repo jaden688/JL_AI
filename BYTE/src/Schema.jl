@@ -227,4 +227,22 @@ const TOOLS_SCHEMA = [Dict("function_declarations" => [
             "required" => ["card_path"]
         )
     ),
+    Dict(
+        "name" => "rayforge_control",
+        "description" => "Puppet the real Rayforge laser-cutter app: import a design file, auto-configure cut/engrave steps, export G-code, and drive the connected machine (connect, home, jog, move, set power, send job, cancel). Talks to a running `python -m rayforge_bridge.server` process — if it's not running, start it first with run_command. Machine actions require 'machine_connect' to have been called first; nothing auto-connects. Laser power is hard-clamped by the bridge for safety.",
+        "parameters" => Dict(
+            "type" => "OBJECT",
+            "properties" => Dict(
+                "action" => Dict(
+                    "type" => "STRING",
+                    "description" => "One of: status | import | add_default_steps | export_gcode | machine_connect | machine_disconnect | machine_home | machine_jog | machine_move_to | machine_set_power | machine_send_job | machine_cancel"
+                ),
+                "params" => Dict(
+                    "type" => "OBJECT",
+                    "description" => "Action-specific arguments. import: {path, mime_type?}. export_gcode: {output_path}. machine_home: {axis?}. machine_jog: {deltas: {X?,Y?,Z?}, speed?}. machine_move_to: {x_mm, y_mm}. machine_set_power: {power_pct, head_index?}. Other actions take no params."
+                )
+            ),
+            "required" => ["action"]
+        )
+    ),
 ])]

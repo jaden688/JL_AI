@@ -7,6 +7,8 @@ import sqlite3
 import json
 import os
 import sys
+import urllib.request
+import urllib.error
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
@@ -469,6 +471,139 @@ def ruida_send_job(
         "status": "started" if (auto_start and start_resp) else ("job_sent" if resp else "no_response"),
     }
     return json.dumps(result, indent=2)
+
+# ── Rayforge control bridge ──────────────────────────────────────────────────────
+# Puppets the real Rayforge laser-cutter GUI app headlessly (import designs,
+# configure cut/engrave steps, generate G-code, drive the machine) via the
+# rayforge_bridge HTTP server. Start it with:
+#   python -m rayforge_bridge.server
+# (must run under a Python that has `rayforge` and its deps installed — see
+# rayforge_bridge/server.py for details). These tools are thin HTTP clients;
+# all Rayforge logic and safety clamps live in the bridge itself.
+RAYFORGE_BRIDGE_URL = os.environ.get("RAYFORGE_BRIDGE_URL", "http://127.0.0.1:8091")
+
+def _rayforge_request(method: str, path: str, body: dict | None = None, timeout: float = 30.0) -> dict:
+    url = RAYFORGE_BRIDGE_URL.rstrip("/") + path
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method,
+                                  headers={"Content-Type": "application/json"} if data else {})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read().decode("utf-8"))
+        except Exception:
+            return {"error": f"HTTP {e.code} from rayforge bridge"}
+    except urllib.error.URLError as e:
+        return {"error": f"rayforge bridge unreachable at {RAYFORGE_BRIDGE_URL} ({e.reason}) — "
+                          f"is it running? Start with: python -m rayforge_bridge.server"}
+
+@mcp.tool()
+def rayforge_status() -> str:
+    """
+    Get Rayforge's current document/machine state: layers, workpieces, configured
+    steps, and whether a machine is connected. Starts the headless Rayforge stack
+    on first call (using Rayforge's own config dir — the real configured machine).
+    """
+    return json.dumps(_rayforge_request("GET", "/status"), indent=2)
+
+@mcp.tool()
+def rayforge_import_file(path: str, mime_type: str = "") -> str:
+    """
+    Import a design file (SVG, DXF, PNG/JPG, PDF, etc.) into Rayforge as a new layer.
+    Default Contour/Engrave steps are added automatically based on the artwork.
+    path: absolute path to the file to import
+    mime_type: optional MIME type override (usually auto-detected from the extension)
+    """
+    body = {"path": path}
+    if mime_type:
+        body["mime_type"] = mime_type
+    return json.dumps(_rayforge_request("POST", "/import", body), indent=2)
+
+@mcp.tool()
+def rayforge_add_default_steps() -> str:
+    """
+    Ensure every layer without steps gets default Contour (+ Engrave, if it has
+    fills) steps, using Rayforge's material/recipe-based auto-configuration.
+    Usually not needed — import already adds these — but useful after manually
+    adding an empty layer.
+    """
+    return json.dumps(_rayforge_request("POST", "/steps/default"), indent=2)
+
+@mcp.tool()
+def rayforge_export_gcode(output_path: str) -> str:
+    """
+    Run the full pipeline (producers -> transformers -> encoder) on the current
+    document and write the resulting G-code to output_path.
+    """
+    return json.dumps(_rayforge_request("POST", "/export_gcode", {"output_path": output_path}), indent=2)
+
+@mcp.tool()
+def rayforge_machine_connect() -> str:
+    """
+    Connect to Rayforge's active machine over its configured driver (serial/network).
+    Required before any homing/jog/power/job command will act. Nothing connects
+    automatically — this must be called explicitly.
+    """
+    return json.dumps(_rayforge_request("POST", "/machine/connect"), indent=2)
+
+@mcp.tool()
+def rayforge_machine_disconnect() -> str:
+    """Disconnect from the active machine."""
+    return json.dumps(_rayforge_request("POST", "/machine/disconnect"), indent=2)
+
+@mcp.tool()
+def rayforge_machine_home(axis: str = "") -> str:
+    """
+    Home the machine. Requires rayforge_machine_connect() first.
+    axis: optional single axis to home ('X'|'Y'|'Z'); omit to home all axes.
+    """
+    body = {"axis": axis} if axis else {}
+    return json.dumps(_rayforge_request("POST", "/machine/home", body), indent=2)
+
+@mcp.tool()
+def rayforge_machine_jog(x_mm: float = 0.0, y_mm: float = 0.0, z_mm: float = 0.0, speed: float = 1000.0) -> str:
+    """
+    Jog the machine by a relative distance on one or more axes. Requires
+    rayforge_machine_connect() first.
+    x_mm / y_mm / z_mm: relative distance to move on each axis (mm), 0 = no movement
+    speed: jog feed rate (mm/min)
+    """
+    deltas = {k: v for k, v in {"X": x_mm, "Y": y_mm, "Z": z_mm}.items() if v}
+    if not deltas:
+        return json.dumps({"error": "at least one of x_mm/y_mm/z_mm must be non-zero"})
+    return json.dumps(_rayforge_request("POST", "/machine/jog", {"deltas": deltas, "speed": speed}), indent=2)
+
+@mcp.tool()
+def rayforge_machine_move_to(x_mm: float, y_mm: float) -> str:
+    """Move the machine to an absolute work-coordinate position. Requires rayforge_machine_connect() first."""
+    return json.dumps(_rayforge_request("POST", "/machine/move_to", {"x_mm": x_mm, "y_mm": y_mm}), indent=2)
+
+@mcp.tool()
+def rayforge_machine_set_power(power_pct: float, head_index: int = 0) -> str:
+    """
+    Set the laser head's power percentage. Requires rayforge_machine_connect() first.
+    power_pct: 0-100 — HARD LIMIT enforced by the bridge (default 60%, see
+               RAYFORGE_BRIDGE_MAX_POWER_PCT), matching this machine's known-safe ceiling.
+    head_index: which laser head, if the machine has more than one (default 0)
+    """
+    return json.dumps(_rayforge_request("POST", "/machine/set_power",
+                                         {"power_pct": power_pct, "head_index": head_index}), indent=2)
+
+@mcp.tool()
+def rayforge_machine_send_job() -> str:
+    """
+    Send the current document's generated job to the connected machine and start
+    it cutting/engraving. Requires rayforge_machine_connect() first. This is the
+    programmatic equivalent of pressing Start — it will actually run the machine.
+    """
+    return json.dumps(_rayforge_request("POST", "/machine/send_job", timeout=120.0), indent=2)
+
+@mcp.tool()
+def rayforge_machine_cancel() -> str:
+    """Cancel the currently running job on the machine."""
+    return json.dumps(_rayforge_request("POST", "/machine/cancel"), indent=2)
 
 # ── Entry ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
