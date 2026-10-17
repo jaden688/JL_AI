@@ -1758,6 +1758,68 @@ function tool_github_pages_deploy(args)
     )
 end
 
+# ── Rayforge control bridge ──────────────────────────────────────────────────
+# Puppets the real Rayforge laser-cutter app headlessly: import a design,
+# auto-configure cut/engrave steps, export G-code, and drive the connected
+# machine. Talks over HTTP to rayforge_bridge/server.py (started separately
+# with `python -m rayforge_bridge.server`), which owns the actual Rayforge
+# DocEditor/MachineCmd instance and all safety clamps (e.g. max laser power).
+# This tool is a thin proxy — no Rayforge logic lives here.
+function _rayforge_bridge_url()
+    rstrip(get(ENV, "RAYFORGE_BRIDGE_URL", "http://127.0.0.1:8091"), '/')
+end
+
+const _RAYFORGE_ACTIONS = Dict{String, Tuple{String,String}}(
+    "status"           => ("GET",  "/status"),
+    "import"            => ("POST", "/import"),
+    "add_default_steps" => ("POST", "/steps/default"),
+    "export_gcode"       => ("POST", "/export_gcode"),
+    "machine_connect"    => ("POST", "/machine/connect"),
+    "machine_disconnect" => ("POST", "/machine/disconnect"),
+    "machine_home"       => ("POST", "/machine/home"),
+    "machine_jog"        => ("POST", "/machine/jog"),
+    "machine_move_to"    => ("POST", "/machine/move_to"),
+    "machine_set_power"  => ("POST", "/machine/set_power"),
+    "machine_send_job"   => ("POST", "/machine/send_job"),
+    "machine_cancel"     => ("POST", "/machine/cancel"),
+)
+
+function tool_rayforge_control(args)
+    action = string(get(args, "action", ""))
+    isempty(action) && return Dict(
+        "error" => "Missing required argument: 'action'",
+        "available_actions" => sort(collect(keys(_RAYFORGE_ACTIONS))),
+    )
+    route = get(_RAYFORGE_ACTIONS, action, nothing)
+    route === nothing && return Dict(
+        "error" => "Unknown action '$action'.",
+        "available_actions" => sort(collect(keys(_RAYFORGE_ACTIONS))),
+    )
+    method, path = route
+    params = get(args, "params", Dict{String,Any}())
+    url = _rayforge_bridge_url() * path
+
+    try
+        resp = if method == "GET"
+            HTTP.get(url; readtimeout=30, status_exception=false)
+        else
+            timeout = action == "machine_send_job" ? 120 : 30
+            HTTP.post(url, ["Content-Type" => "application/json"], JSON.json(params);
+                      readtimeout=timeout, status_exception=false)
+        end
+        body = try JSON.parse(String(resp.body)) catch; Dict("raw" => String(resp.body)) end
+        if resp.status >= 400
+            return Dict("error" => get(body, "error", "Rayforge bridge returned HTTP $(resp.status)"), "status" => resp.status)
+        end
+        return Dict("result" => body)
+    catch e
+        if e isa Base.IOError || occursin("ConnectError", string(typeof(e))) || occursin("connection", lowercase(string(e)))
+            return Dict("error" => "Rayforge bridge unreachable at $(_rayforge_bridge_url()) — is it running? Start with: python -m rayforge_bridge.server")
+        end
+        return Dict("error" => "Rayforge bridge request failed: $(first(string(e), 300))")
+    end
+end
+
 const TOOL_MAP = Dict{String, Function}(
     "read_file"      => tool_read_file,
     "write_file"     => tool_write_file,
@@ -1777,6 +1839,7 @@ const TOOL_MAP = Dict{String, Function}(
     "recall"         => tool_recall,
     "metamorph"      => tool_metamorph,
     "card_cruncher"  => tool_card_cruncher,
+    "rayforge_control" => tool_rayforge_control,
 )
 
 function dispatch(name::String, args; agent::String="SparkByte")

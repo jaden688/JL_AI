@@ -135,7 +135,9 @@ Measures misalignment between user intent and agent response (0.0–1.0). High d
 
 ### Static Tools (defined in BYTE/src/Schema.jl)
 
-read_file, write_file, list_files, run_command, get_os_info, bluetooth_devices, send_sms, browse_url (Playwright), search_memory, remember, forget, list_memories, list_dynamic_tools, forge_new_tool, talk_to_claude, etc.
+read_file, write_file, list_files, run_command, get_os_info, bluetooth_devices, send_sms, browse_url (Playwright), search_memory, remember, forget, list_memories, list_dynamic_tools, forge_new_tool, talk_to_claude, rayforge_control, etc.
+
+`rayforge_control` puppets the real Rayforge laser-cutter GUI app (import a design, auto-configure cut/engrave steps, export G-code, connect/home/jog/move/set-power/send-job/cancel on the machine) by proxying HTTP calls to a separately-running `python -m rayforge_bridge.server` process (`rayforge_bridge/server.py`), which owns the actual headless Rayforge `DocEditor`/`MachineCmd` instance. The same bridge is also exposed as granular `rayforge_*` tools in `mcp_server/server.py` for MCP clients. Nothing auto-connects to a machine — `machine_connect` must be called explicitly, and laser power is hard-clamped by the bridge (`RAYFORGE_BRIDGE_MAX_POWER_PCT`, default 60%).
 
 ### Forged Tools (Dynamic)
 
@@ -180,7 +182,8 @@ Each agent has: emotion_palette, drive_type, boot_prompt, personality, tone, etc
 | `src/JLEngine/Core.jl` | JLEngineCore struct, analyze_turn!, run_turn!, cognitive callback |
 | `src/JLEngine/Types.jl` | Core types: EngineConfig, MPFProfile, BehaviorState, TurnSignals, RhythmState |
 | `a2a_server.jl` | A2A HTTP endpoint on port 8082, JSON-RPC task handling |
-| `mcp_server/server.py` | Python MCP server (stdio/SSE/HTTP) — reads SQLite, bridges to engine |
+| `mcp_server/server.py` | Python MCP server (stdio/SSE/HTTP) — reads SQLite, bridges to engine, exposes `rayforge_*` and `ruida_*` hardware-control tools |
+| `rayforge_bridge/server.py` | Standalone HTTP server puppeting a headless Rayforge instance (`DocEditor`/`MachineCmd`) — run separately with `python -m rayforge_bridge.server` |
 | `data/agents/Agents.mpf.json` | Agent registry — maps names to JSON personality files |
 | `data/JLframe_Engine_Framework.json` | Master config — engine settings, core rules |
 | `compose.yaml` | Docker Compose — builds and runs engine with both ports |
@@ -213,6 +216,8 @@ Each agent has: emotion_palette, drive_type, boot_prompt, personality, tone, etc
 
 12. **UI is a single inlined HTML file**: `BYTE/src/ui.html` is a self-contained HTML/JS/CSS file served by `UI.jl`. It communicates with the engine over WebSocket. The terminal panel receives cognitive broadcasts and forge stream events.
 
+13. **Rayforge bridge runs on the global Python, not a venv**: `tool_rayforge_control` and the MCP `rayforge_*` tools are thin HTTP proxies to `rayforge_bridge/server.py`, which must be launched separately (`python -m rayforge_bridge.server`) under whatever interpreter `PYTHON`/`python` resolves to for this engine — same convention as the JulianMetaMorph bridge. That interpreter needs `rayforge` (`pip install -e <rayforge checkout> --no-deps`) plus its runtime deps installed directly, system-wide — not in an isolated venv, since the engine always shells out to the plain interpreter on PATH. `pyvips` additionally needs a native `libvips-42.dll` on PATH (get one from https://github.com/libvips/build-win64-mxe/releases). The bridge is not started automatically by BYTE — start it before calling `rayforge_control`.
+
 ---
 
 ## Environment Variables
@@ -239,6 +244,11 @@ Each agent has: emotion_palette, drive_type, boot_prompt, personality, tone, etc
 | `TWILIO_ACCOUNT_SID` | — | SMS via Twilio |
 | `TWILIO_AUTH_TOKEN` | — | SMS auth |
 | `TWILIO_FROM_NUMBER` | — | SMS sender |
+| `RAYFORGE_BRIDGE_URL` | http://127.0.0.1:8091 | Where `tool_rayforge_control` / MCP `rayforge_*` tools send requests |
+| `RAYFORGE_BRIDGE_HOST` | 127.0.0.1 | Bind address for `python -m rayforge_bridge.server` |
+| `RAYFORGE_BRIDGE_PORT` | 8091 | Bind port for the Rayforge bridge server |
+| `RAYFORGE_BRIDGE_MAX_POWER_PCT` | 60 | Hard clamp on `machine_set_power` — refuses anything above this |
+| `RAYFORGE_CONFIG_DIR` | platformdirs default | Rayforge's own config dir (machines/materials/recipes) — same var the Rayforge GUI app reads |
 
 ---
 
