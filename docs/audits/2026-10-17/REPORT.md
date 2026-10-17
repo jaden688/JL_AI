@@ -81,9 +81,9 @@ The Julia job now blocks failures; the local full suite passed 83 assertions.
 
 | PR | Evidence | Decision |
 |---|---|---|
-| #8 | Proposes 15.5.16; main already received 15.5.21 via merged #11; conflicts | Superseded by tested 15.5.28 repair; close after landing repair |
-| #12 | PostCSS 8.5.18/nanoid 3.3.16; historical Snyk passed, but newer advisories affect these versions | Superseded by patched graph; close after landing repair |
-| #10 | Unique Rayforge integration; source and mocked-route tests expose security gaps | Preserve open; do not merge |
+| #8 | Proposes 15.5.16; main already received 15.5.21 via merged #11; conflicts | Closed; superseded by merged repair #13 |
+| #12 | PostCSS 8.5.18/nanoid 3.3.16; historical Snyk passed, but newer advisories affect these versions | Closed; superseded by merged repair #13 |
+| #10 | Unique Rayforge integration; source and mocked-route tests expose security gaps | Preserved open as draft; do not merge |
 
 PR #8's Sourcery result consisted of one Next vulnerability (CVE-2026-45109)
 and fourteen native-image dependency license-policy flags. License flags are
@@ -119,10 +119,11 @@ remain intact. Root agent guidance and `.github/agents/sparkbyte.agent.md`
 were preserved because they serve separate purposes.
 
 No remote branch was deleted. `branches.json` records exact heads, divergence,
-and non-equivalent patch counts. Proposed deletion after replacement lands:
+and non-equivalent patch counts. Proposed deletion, awaiting the user's required review:
 
 - `snyk-fix-6404e380ed6f96e361295595e9e42ab8`
 - `dependabot/npm_and_yarn/web/npm_and_yarn-f436965d76`
+- `security/repository-repair-2026-10-17` (repair PR #13 is merged; its final tree exactly matches main)
 
 Preserve `copilot/analyze-security-issues` (26 non-equivalent patches),
 `copilot/review-repo-status` (48), `feature/caido-integration` (1),
@@ -171,3 +172,12 @@ The new repair PR #13 received a Vercel failure (`Account is blocked.`)
 and a Snyk error (`You have used your limit of private tests`). These prevent
 external verification; neither is an application-test failure. Independent
 local audit and validation results above remain the verification evidence.
+
+## Final repository state
+
+Repair PR #13 was squash-merged as `47db745619fdebac8daf750b5f994e29637174a7`.
+Its tree `7fe80024a5a52067234c8db2a8caa0d3d5fe5451` exactly matches the tested
+checkout. PRs #8 and #12 are closed as superseded; #10 is the sole remaining
+open PR and is a draft with its blockers documented. No remote branch was
+deleted, no JSON agent changed, and no license or existing history was rewritten.
+The temporary local Rayforge review worktree was removed after testing.
