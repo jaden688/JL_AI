@@ -49,6 +49,7 @@ a2a-tck/
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
 .venv/
 venv/
 .CondaPkg/
@@ -61,3 +62,9 @@ pitreader_backup_copy/
 # Nested engine variants (separate repos)
 src/j-engine/
 src/jl-engine-local/
+
+# Next.js dependencies and generated output
+web/node_modules/
+web/.next/
+web/out/
+web/*.tsbuildinfo

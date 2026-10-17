@@ -1,0 +1,8 @@
+INFO:aiohttp.access:127.0.0.1 [17/Oct/2026:12:58:16 -0700] "POST /machine/send_job HTTP/1.1" 200 177 "-" "Python/3.12 aiohttp/3.14.4"
+INFO:aiohttp.access:127.0.0.1 [17/Oct/2026:12:58:16 -0700] "POST /machine/set_power HTTP/1.1" 403 236 "-" "Python/3.12 aiohttp/3.14.4"
+INFO:aiohttp.access:127.0.0.1 [17/Oct/2026:12:58:16 -0700] "POST /machine/set_power HTTP/1.1" 200 213 "-" "Python/3.12 aiohttp/3.14.4"
+INFO:aiohttp.access:127.0.0.1 [17/Oct/2026:12:58:16 -0700] "POST /export_gcode HTTP/1.1" 200 247 "-" "Python/3.12 aiohttp/3.14.4"
+unauthenticated foreign-origin job: 200 {"status": "sent"} mock calls ['send_job']
+power limit control: 403 {"error": "power_pct 61.0 exceeds hard limit of 60.0% \u2014 refused"}
+nonfinite power: 200 {"scheduled": true, "power_pct": NaN, "head_index": 0} mock calls ['send_job', ('power', nan)]
+arbitrary export path: 200 file created True

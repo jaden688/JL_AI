@@ -7,6 +7,13 @@ from fastapi.testclient import TestClient
 from julian_metamorph.service import create_app
 
 
+def test_core_service_starts_without_optional_genome_backend(tmp_path) -> None:
+    client = TestClient(create_app(db_path=tmp_path / "quarry.db", genome_dir=tmp_path / "genome"))
+    assert client.get("/health").status_code == 200
+    assert client.post("/genome/ingest").status_code == 501
+    assert client.post("/genome/search", json={"query": "embedding"}).status_code == 501
+
+
 def test_service_health_and_prompt(tmp_path) -> None:
     client = TestClient(create_app(db_path=tmp_path / "quarry.db", data_root=tmp_path / "data"))
 

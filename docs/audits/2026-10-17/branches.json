@@ -1,0 +1,72 @@
+[
+  {
+    "branch": "copilot/analyze-security-issues",
+    "sha": "c7a9612612156f6c80b8c8b7dc90cfc5f328d32b",
+    "behind_ahead": [
+      13,
+      26
+    ],
+    "non_equivalent_patches": 26,
+    "equivalent_patches": 0
+  },
+  {
+    "branch": "copilot/review-repo-status",
+    "sha": "bb36b1955a54058f373da2ca30bae5962681bc73",
+    "behind_ahead": [
+      13,
+      49
+    ],
+    "non_equivalent_patches": 48,
+    "equivalent_patches": 0
+  },
+  {
+    "branch": "dependabot/npm_and_yarn/web/npm_and_yarn-f436965d76",
+    "sha": "5a9c39a7f84a5381f32a409394f0ddb264cfe8c5",
+    "behind_ahead": [
+      3,
+      1
+    ],
+    "non_equivalent_patches": 1,
+    "equivalent_patches": 0
+  },
+  {
+    "branch": "feature/caido-integration",
+    "sha": "720a1bdf32171ce30083b7f506bad46cb7cfff44",
+    "behind_ahead": [
+      3,
+      1
+    ],
+    "non_equivalent_patches": 1,
+    "equivalent_patches": 0
+  },
+  {
+    "branch": "public-main",
+    "sha": "9c1c3ef99c698a448595f4ccd3bbbe53df86e5d9",
+    "behind_ahead": [
+      13,
+      5
+    ],
+    "non_equivalent_patches": 5,
+    "equivalent_patches": 0
+  },
+  {
+    "branch": "snyk-fix-6404e380ed6f96e361295595e9e42ab8",
+    "sha": "8f8956999dad556382d451f91345194e3f9533f8",
+    "behind_ahead": [
+      9,
+      1
+    ],
+    "non_equivalent_patches": 1,
+    "equivalent_patches": 0
+  },
+  {
+    "branch": "worktree-purrfect-giggling-iverson",
+    "sha": "1814738aa6d70484843b455ddb57cb11e8e69798",
+    "behind_ahead": [
+      3,
+      3
+    ],
+    "non_equivalent_patches": 2,
+    "equivalent_patches": 0
+  }
+]

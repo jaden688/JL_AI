@@ -5,7 +5,7 @@ from dataclasses import asdict
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -118,10 +118,20 @@ def create_app(
     # Resolve genome dir: explicit arg → sibling of db_path at data/genome
     _db = Path(db_path)
     _genome = Path(genome_dir) if genome_dir else _db.parent.parent / "genome"
-    quarry = QuarryStore(db_path, genome_dir=_genome if _genome.is_dir() else None)
+    # Genome storage is optional. Some repository versions expose the HTTP
+    # routes before their QuarryStore backend exists; do not prevent the core
+    # service from starting in that case.
+    genome_supported = all(
+        callable(getattr(QuarryStore, name, None))
+        for name in ("hf_count", "ingest_genome", "search_hf")
+    )
+    if genome_supported:
+        quarry = QuarryStore(db_path, genome_dir=_genome if _genome.is_dir() else None)
+    else:
+        quarry = QuarryStore(db_path)
     morph = JulianMetaMorph(profile=profile, quarry=quarry)
     # Auto-ingest genome on startup if models not yet loaded
-    if quarry.hf_count() == 0 and quarry.genome_dir:
+    if genome_supported and quarry.hf_count() == 0 and quarry.genome_dir:
         quarry.ingest_genome()
     forge = SkillForge(profile=profile)
     data_dir = Path(data_root) if data_root is not None else Path(db_path).resolve().parent
@@ -250,6 +260,8 @@ def create_app(
     @app.post("/genome/ingest")
     def genome_ingest() -> dict[str, object]:
         """(Re-)ingest HuggingFace genome from data/genome/*.jsonl into the quarry."""
+        if not genome_supported:
+            raise HTTPException(status_code=501, detail="Genome storage is not implemented by this QuarryStore backend")
         if not quarry.genome_dir:
             return {"error": "genome_dir not configured — set genome_dir on QuarryStore or pass ?genome_dir= param"}
         result = quarry.ingest_genome()
@@ -258,6 +270,8 @@ def create_app(
     @app.post("/genome/search")
     def genome_search(request: GenomeSearchRequest) -> dict[str, object]:
         """Search the HuggingFace genome for models matching a task/query."""
+        if not genome_supported:
+            raise HTTPException(status_code=501, detail="Genome storage is not implemented by this QuarryStore backend")
         hits = quarry.search_hf(request.query, limit=request.limit)
         return {"query": request.query, "hits": hits, "count": len(hits)}
 
