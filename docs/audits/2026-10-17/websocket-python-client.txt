@@ -1,0 +1,5 @@
+accepted None
+accepted http://127.0.0.1:18382
+rejected https://attacker.example 403
+rejected null 403
+Live BYTE handshake: 4/4 passed

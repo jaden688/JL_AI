@@ -629,13 +629,21 @@ function tool_execute_code(args)
         final_code = lang == "julia" ? _JULIA_SQLITE_PREAMBLE * "\n" * code : code
         write(tmp, final_code)
         cmd = lang == "python" ? _python_command(tmp) : `$(_julia_command(root)) $tmp`
-        buffer = IOBuffer()
-        run(pipeline(cmd, stdout=buffer, stderr=buffer))
-        out = String(take!(buffer))
-        Dict("stdout" => out, "language" => lang)
+        # IOBuffer redirection uses asynchronous pipe-copy tasks. Reading it
+        # immediately after the child exits can race those tasks and lose output.
+        # A real file descriptor lets the OS capture both streams before wait ends.
+        mktemp() do _, capture
+            try
+                run(pipeline(cmd, stdout=capture, stderr=capture))
+                seekstart(capture)
+                Dict("stdout" => read(capture, String), "language" => lang)
+            catch e
+                seekstart(capture)
+                Dict("error" => string(e), "output" => read(capture, String), "language" => lang)
+            end
+        end
     catch e
-        captured = @isdefined(buffer) ? String(take!(buffer)) : ""
-        Dict("error" => string(e), "output" => captured, "language" => lang)
+        Dict("error" => string(e), "output" => "", "language" => lang)
     finally
         isempty(tmp) || rm(tmp; force=true)
     end

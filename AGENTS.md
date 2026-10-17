@@ -203,9 +203,9 @@ Each agent has: emotion_palette, drive_type, boot_prompt, personality, tone, etc
 
 7. **Julian autonomous loop**: Enabled by setting `JULIAN_AUTONOMOUS_SECONDS > 0`. Runs a background task that periodically executes curiosity hunts and writes to the thoughts table + WebSocket broadcast (`julian_curiosity` type). The UI may need a handler for this message type.
 
-8. **MCP server has its own security sandbox**: By default, all filesystem paths must resolve under an allow-listed root. Set `MCP_ALLOW_EXTERNAL_PATHS=1` to disable. Non-loopback binding requires `MCP_BIND_ACK=I_understand_no_builtin_auth` + `MCP_AUTH_TOKEN`.
+8. **MCP security depends on its transport and deployment**: The current bridge does not implement the path sandbox or `MCP_AUTH_TOKEN` enforcement described by older branches. Stdio inherits the local user's trust. Keep HTTP local or place it behind an authenticated proxy; do not assume those environment variables add authentication.
 
-9. **Test coverage is minimal**: The `test/` directory contains `test_dynamic_tools.jl` which is a log of forged tool smoke tests (not automated test code). `Pkg.test()` is configured in Project.toml but there's no formal test suite.
+9. **Tests**: `test/runtests.jl` includes execute-code, A2A, billing, discovery, and WebSocket browser-boundary tests. `test_dynamic_tools.jl` is a smoke-test log. The Python Julian service has a separate pytest suite.
 
 10. **Forge is irreversible without rollback**: Forged tools are `include_string`'d into `Main.BYTE`. There is no un-forge mechanism. To remove a forged tool, restart the engine and edit `dynamic_tools.jl`.
 
@@ -220,6 +220,7 @@ Each agent has: emotion_palette, drive_type, boot_prompt, personality, tone, etc
 | Variable | Default | Purpose |
 |---|---|---|
 | `SPARKBYTE_HOST` | 127.0.0.1 | WebSocket/HTTP bind |
+| `SPARKBYTE_ALLOWED_ORIGINS` | empty | Comma-separated remote UI origins, e.g. https://engine.example; requires an authenticated proxy. Not an authentication mechanism. |
 | `SPARKBYTE_PORT` | 8081 | Main engine port |
 | `SPARKBYTE_ROOT` | auto-detect | Override runtime root |
 | `SPARKBYTE_STATE_DIR` | <root>/data | Override data directory |
@@ -247,6 +248,6 @@ Each agent has: emotion_palette, drive_type, boot_prompt, personality, tone, etc
 - **Default transport**: stdio (`python server.py`)
 - **SSE**: `python server.py --http` binds to `MCP_PORT` (default 8083)
 - **FastMCP HTTP**: `python http_server.py` (port 8000)
-- **Security**: Default bind is 127.0.0.1. Remote bind requires explicit env vars (see `mcp_server/server.py` docstring for details)
+- **Security**: Keep HTTP on loopback or use an authenticated proxy. The current bridge does not enforce the old branch's custom token/bind environment variables.
 - **WS connection**: Connects to engine at `SPARKBYTE_WS` (default `ws://127.0.0.1:8081`) with connection pool (`MCP_WS_CONCURRENCY`, default 4)
 - **Output cap**: `MCP_MAX_RESPONSE_BYTES` (default 60kB)

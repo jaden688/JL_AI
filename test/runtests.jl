@@ -1,5 +1,7 @@
 using Test
 
+include("test_websocket_security.jl")
+
 include(joinpath(@__DIR__, "..", "BYTE", "src", "Schema.jl"))
 include(joinpath(@__DIR__, "..", "BYTE", "src", "Tools.jl"))
 
@@ -24,6 +26,14 @@ include(joinpath(@__DIR__, "..", "BYTE", "src", "Tools.jl"))
         "code" => "puts 'nope'"
     ))
     @test occursin("Unsupported language", rejected["error"])
+
+    failed = tool_execute_code(Dict(
+        "language" => "python",
+        "code" => "import sys\nprint('stdout-marker', flush=True)\nprint('stderr-marker', file=sys.stderr, flush=True)\nsys.exit(2)"
+    ))
+    @test haskey(failed, "error")
+    @test occursin("stdout-marker", failed["output"])
+    @test occursin("stderr-marker", failed["output"])
 end
 
 include("test_a2a_discovery.jl")

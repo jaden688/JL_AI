@@ -1,0 +1,10 @@
+Test Summary:              | Pass  Total  Time
+WebSocket browser boundary |   13     13  0.0s
+Test Summary:                  | Pass  Total  Time
+execute_code language handling |   10     10  0.1s
+Test Summary: | Pass  Total  Time
+A2A discovery |   24     24  0.4s
+Test Summary: | Pass  Total  Time
+A2A billing   |    7      7  0.1s
+Test Summary: | Pass  Total  Time
+A2A protocol  |   29     29  0.6s

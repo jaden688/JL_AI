@@ -6,6 +6,7 @@ include("UI.jl")
 include("Schema.jl")
 include("Tools.jl")
 include("Telemetry.jl")
+include("WebSecurity.jl")
 
 export init, serve, launch, process_message, install_cognitive_callback!
 
@@ -1396,6 +1397,17 @@ function serve(engine; host::String="127.0.0.1", port::Int=8081)
     _db_start_session(_session_id)
     HTTP.serve(host, port, stream=true) do stream
         if HTTP.WebSockets.isupgrade(stream.message)
+            req = stream.message
+            trusted_origins = split(get(ENV, "SPARKBYTE_ALLOWED_ORIGINS", ""), ',')
+            if !websocket_origin_allowed(HTTP.header(req, "Host"), HTTP.header(req, "Origin"); trusted_origins)
+                message = "WebSocket origin or host is not allowed"
+                HTTP.setstatus(stream, 403)
+                HTTP.setheader(stream, "Content-Type" => "text/plain; charset=utf-8")
+                HTTP.setheader(stream, "Content-Length" => string(ncodeunits(message)))
+                HTTP.startwrite(stream)
+                write(stream, message)
+                return
+            end
             HTTP.WebSockets.upgrade(stream) do ws
                 cid = objectid(ws)
                 lock(_WS_CLIENTS_LOCK) do; _WS_CLIENTS[cid] = ws; end
