@@ -9,3 +9,7 @@
 - Five local built-page HTTP responses and Sharp PNG encode/decode passed.
 - Patched Python package controls and `pip check`: passed. Entire root requirements install remains blocked by missing editable projects; compatibility of every optional ML library is not established.
 - Full dependency audit limitations, external account restrictions, historical credential rotation and incomplete Rayforge/genome backend remain as described in REPORT.md.
+
+- Live BYTE WebSocket handshake: 4/4 passed against the actual server (foreign and null origins rejected with HTTP 403; native and same-origin connections accepted). Upgrade probes used isolated connections to avoid reusing an upgraded/closed HTTP client connection. No tool messages were sent. Reproducer: `julia --project=. --compile=min -O0 --compiled-modules=no docs/audits/2026-10-17/websocket_handshake.jl`.
+
+- Python websockets 13.1 against live BYTE: native/same-origin accepted, foreign/null origins returned HTTP 403 (**4/4 passed**). Rejection responses now include Content-Length for clients that cannot parse chunked handshake errors. Full Pkg.test rerun after this header change: **83/83 passed**.

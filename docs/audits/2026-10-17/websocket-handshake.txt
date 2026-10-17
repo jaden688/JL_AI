@@ -1,0 +1,4 @@
+[ Info: Listening on: 127.0.0.1:18381, thread id: 1
+⚡ BYTE serving on 127.0.0.1:18381
+Test Summary:                 | Pass  Total  Time
+live BYTE WebSocket handshake |    4      4  0.2s

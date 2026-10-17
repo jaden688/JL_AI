@@ -151,7 +151,9 @@ No secret value is included here. Git history was not rewritten.
 - Julian pytest: 12 passed, one upstream Starlette/httpx deprecation warning.
 - MCP smoke: 7/7 passed. This checks error-path callability without live DBs;
   an additional temporary real-SQLite read/parameterization control passed.
-- WebSocket browser-boundary unit tests: 13 passed.
+- WebSocket browser-boundary unit tests: 13 passed. Live BYTE handshake:
+  4/4 passed, rejecting foreign/null origins while accepting native/same-origin
+  clients. No tool payloads were sent.
 - Extracted production execute-code capture controls: 18 passed. Full Julia
   rerun also passed its 10 execute-code assertions before reaching later tests.
 - Compose YAML host-publishing check and `git diff --check`: passed.
@@ -162,3 +164,10 @@ No secret value is included here. Git history was not rewritten.
 
 Full Julia-suite and formal Pkg.test reruns passed all 83 assertions.
 See VALIDATION.md and julia-pkg-tests.txt for exact commands and limitations.
+
+## Post-publication service status
+
+The new repair PR #13 received a Vercel failure (`Account is blocked.`)
+and a Snyk error (`You have used your limit of private tests`). These prevent
+external verification; neither is an application-test failure. Independent
+local audit and validation results above remain the verification evidence.

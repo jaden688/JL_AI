@@ -1,5 +1,5 @@
      Testing JLEngine
-      Status `/tmp/jl_qT2O0Y/Project.toml`
+      Status `/tmp/jl_wLh6rV/Project.toml`
   [5ae59095] Colors v0.13.3
   [a93c6f00] DataFrames v1.8.2
   [5789e2e9] FileIO v1.20.0
@@ -17,7 +17,7 @@
   [ea8e919c] SHA v0.7.0
   [8dfed614] Test
   [cf7118a7] UUIDs
-      Status `/tmp/jl_qT2O0Y/Manifest.toml`
+      Status `/tmp/jl_wLh6rV/Manifest.toml`
   [621f4979] AbstractFFTs v1.5.0
   [1520ce14] AbstractTrees v0.4.5
   [79e6a3ab] Adapt v4.7.4
@@ -280,5 +280,5 @@ A2A discovery |   24     24  0.4s
 Test Summary: | Pass  Total  Time
 A2A billing   |    7      7  0.1s
 Test Summary: | Pass  Total  Time
-A2A protocol  |   29     29  0.8s
+A2A protocol  |   29     29  0.6s
      Testing JLEngine tests passed 

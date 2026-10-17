@@ -1400,10 +1400,12 @@ function serve(engine; host::String="127.0.0.1", port::Int=8081)
             req = stream.message
             trusted_origins = split(get(ENV, "SPARKBYTE_ALLOWED_ORIGINS", ""), ',')
             if !websocket_origin_allowed(HTTP.header(req, "Host"), HTTP.header(req, "Origin"); trusted_origins)
+                message = "WebSocket origin or host is not allowed"
                 HTTP.setstatus(stream, 403)
                 HTTP.setheader(stream, "Content-Type" => "text/plain; charset=utf-8")
+                HTTP.setheader(stream, "Content-Length" => string(ncodeunits(message)))
                 HTTP.startwrite(stream)
-                write(stream, "WebSocket origin or host is not allowed")
+                write(stream, message)
                 return
             end
             HTTP.WebSockets.upgrade(stream) do ws
