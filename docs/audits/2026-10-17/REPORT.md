@@ -93,8 +93,9 @@ Snyk statuses alone do not establish current security.
 
 ### Rayforge findings
 
-`rayforge_review.py <path-to-PR-10-checkout>` safely exercises an in-process
-aiohttp test server with fake machine/editor objects. Observed:
+The review exercised an in-process aiohttp test server with fake machine/editor
+objects. Rayforge-specific review files were subsequently removed from main at
+the owner's request; the integration remains separate in draft PR #10. Observed:
 
 - Foreign-origin, unauthenticated `/machine/send_job`: HTTP 200 and fake job
   dispatch. No authentication/bind safeguard exists in the bridge.
